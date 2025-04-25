@@ -414,7 +414,7 @@ async fn actual_main(mut cli_app: Ferium) -> Result<()> {
             let path = get_active_working_dir(&mut config)?;
             let (item, profile) = get_active_profile(&mut config)?;
             check_empty_profile(&profile)?;
-            subcommands::upgrade(path.as_deref(), item, &profile, filters.into()).await?;
+            subcommands::upgrade(path, item, &profile, filters.into()).await?;
         }
         SubCommands::Migrate {
             config: old_config_path,

@@ -13,7 +13,7 @@ use libium::{
         read_profile,
         structs::{
             Filters, ModLoader, Profile, ProfileItemConfig, Source, SourceId, SourceKind,
-            SourceKindWithModpack, Version,
+            SourceKindWithModpack, SrcPath, Version,
         },
     },
     get_tmp_dir,
@@ -36,7 +36,7 @@ use tokio::task::JoinSet;
 
 pub async fn upgrade(
     // The path to the profiles parent or `None` if it is embedded
-    src_path: Option<&Path>,
+    src_path: Option<PathBuf>,
     profile_item: &ProfileItemConfig,
     profile: &Profile,
     filters: Filters,
@@ -45,6 +45,8 @@ pub async fn upgrade(
 
     let mut options = OptionsOverrides::default();
     let mut to_download = vec![];
+
+    let src_path = src_path.map(|path| SrcPath::Path(path));
 
     let error =
         get_platform_downloadables(src_path, &mut options, &mut to_download, profile, filters)
@@ -111,7 +113,7 @@ pub fn apply_options_overrides(minecraft_dir: &Path, options: OptionsOverrides) 
 /// If an error occurs with a resolving task, instead of failing immediately,
 /// resolution will continue and the error return flag is set to true.
 async fn get_platform_downloadables(
-    src_path: Option<&Path>,
+    src_path: Option<SrcPath>,
     options: &mut OptionsOverrides,
     to_download: &mut Vec<DownloadData>,
     profile: &Profile,
@@ -126,17 +128,13 @@ async fn get_platform_downloadables(
 
     if let Some(src_path) = src_path {
         for import in &profile.imports {
-            let profile_path = import.download(src_path).await?;
-            let path = src_path.join(&profile_path);
-            let Some(profile) = read_profile(&path)? else {
-                bail!("The profile at '{}' doesn't exist.", profile_path.display())
+            let (src_path, filepath) = import.download(src_path).await?;
+            let Some(profile) = read_profile(&filepath)? else {
+                bail!("The profile at '{}' doesn't exist.", filepath.display())
             };
 
             error |= Box::pin(get_platform_downloadables(
-                Some(
-                    path.parent()
-                        .context("Profile path should have a parent directory")?,
-                ),
+                Some(src_path),
                 options,
                 to_download,
                 &profile,

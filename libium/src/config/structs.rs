@@ -195,16 +195,24 @@ pub struct Profile {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum ProfileImport {
-    Short(ProfileImportSource),
+    Short(ProfilePath),
     Long {
-        src: ProfileImportSource,
+        src: ProfilePath,
         hash: Option<String>,
     },
 }
 
+/// The source of a profile import, e.g './path/to/profile.toml' or 'https://example.com/profile.toml'
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
-pub enum ProfileImportSource {
+pub enum ProfilePath {
+    Url(Url),
+    Path(PathBuf),
+}
+
+/// The parent of a profile path, e.g './path/to' or 'https://example.com'.
+/// Used as the current working directory of a profile.
+pub enum SrcPath {
     Url(Url),
     Path(PathBuf),
 }

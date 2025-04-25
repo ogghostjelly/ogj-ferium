@@ -5,8 +5,8 @@ use crate::{
     config::{
         modpack::modrinth,
         structs::{
-            ModLoader, ProfileImport, ProfileImportSource, ReleaseChannel, SourceId, SourceKind,
-            SourceKindWithModpack,
+            ModLoader, ProfileImport, ProfilePath, ReleaseChannel, SourceId, SourceKind,
+            SourceKindWithModpack, SrcPath,
         },
     },
     get_tmp_dir,
@@ -30,7 +30,7 @@ use std::{
     ffi::OsStr,
     fs::{self, create_dir_all, rename, File, OpenOptions},
     io::{self, BufWriter, SeekFrom, Write},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
 };
 
@@ -42,6 +42,12 @@ pub enum Error {
     FsExtraError(#[from] fs_extra::error::Error),
     #[error("expected file hash {0} but got {1}")]
     UnexpectedFileHash(String, String),
+    #[error("malformed url: cannot be base: '{0}'")]
+    UrlCannotBeBase(Url),
+    #[error("path is not valid utf-8: '{0}'")]
+    InvalidUtf8Path(PathBuf),
+    #[error("paths in url imported profiles cannot contain prefix components: '{0}'")]
+    PathWithPrefix(PathBuf),
 }
 type Result<T> = std::result::Result<T, Error>;
 
@@ -566,7 +572,7 @@ pub fn calculate_sha512(path: &Path) -> std::result::Result<String, io::Error> {
 }
 
 impl ProfileImport {
-    pub async fn download(&self, src_path: &Path) -> Result<PathBuf> {
+    pub async fn download(&self, src_path: SrcPath) -> Result<(SrcPath, PathBuf)> {
         match self {
             ProfileImport::Short(src) | ProfileImport::Long { src, hash: None } => {
                 src.download(src_path).await
@@ -575,34 +581,66 @@ impl ProfileImport {
                 src,
                 hash: Some(hash),
             } => {
-                let path = src.download(src_path).await?;
-                let file_hash = calculate_sha512(&path)?;
+                let (src_path, filepath) = src.download(src_path).await?;
+                let file_hash = calculate_sha512(&filepath)?;
                 if !file_hash.starts_with(&hash.to_ascii_lowercase()) {
                     return Err(Error::UnexpectedFileHash(hash.clone(), file_hash));
                 }
-                Ok(path)
+                Ok((src_path, filepath))
             }
         }
     }
 }
 
-impl ProfileImportSource {
-    pub async fn download(&self, src_path: &Path) -> Result<PathBuf> {
+impl ProfilePath {
+    pub async fn download(&self, src_path: SrcPath) -> Result<(SrcPath, PathBuf)> {
         match self {
-            ProfileImportSource::Path(path) => Ok(src_path.join(path)),
-            ProfileImportSource::Url(url) => {
-                let path = url.path();
-                let (_, filename) = path.rsplit_once('/').unwrap_or(("", path));
-                let temp_file_path = get_tmp_dir()?.join(filename);
-
-                let mut temp_file = File::create(&temp_file_path)?;
-                let mut response = reqwest::get(url.clone()).await?;
-                while let Some(chunk) = response.chunk().await? {
-                    temp_file.write_all(&chunk)?;
-                }
-
-                Ok(temp_file_path)
-            }
+            ProfilePath::Path(path) => match src_path {
+                SrcPath::Url(url) => Self::download_url(Self::join_url(url, path)?).await,
+                SrcPath::Path(src_path) => Self::download_path(src_path, path).await,
+            },
+            ProfilePath::Url(url) => Self::download_url(url.clone()).await,
         }
+    }
+
+    fn join_url(mut url: Url, path: &PathBuf) -> Result<Url> {
+        let Ok(mut segs) = url.path_segments_mut() else {
+            return Err(Error::UrlCannotBeBase(url));
+        };
+
+        for c in path.components() {
+            match c {
+                Component::RootDir => segs.clear(),
+                Component::CurDir => &mut segs,
+                Component::ParentDir => segs.pop(),
+                Component::Normal(s) => match s.to_str() {
+                    Some(s) => segs.push(s),
+                    None => return Err(Error::InvalidUtf8Path(path.clone())),
+                },
+                Component::Prefix(_) => return Err(Error::PathWithPrefix(path.clone())),
+            };
+        }
+
+        drop(segs);
+        Ok(url)
+    }
+
+    async fn download_path(src_path: PathBuf, path: &PathBuf) -> Result<(SrcPath, PathBuf)> {
+        let filepath = src_path.join(path);
+        Ok((SrcPath::Path(src_path), filepath))
+    }
+
+    async fn download_url(url: Url) -> Result<(SrcPath, PathBuf)> {
+        let path = url.path();
+        let (_, filename) = path.rsplit_once('/').unwrap_or(("", path));
+        let temp_file_path = get_tmp_dir()?.join(filename);
+
+        let mut temp_file = File::create(&temp_file_path)?;
+        let mut response = reqwest::get(url.clone()).await?;
+        while let Some(chunk) = response.chunk().await? {
+            temp_file.write_all(&chunk)?;
+        }
+
+        Ok((SrcPath::Url(url), temp_file_path))
     }
 }
