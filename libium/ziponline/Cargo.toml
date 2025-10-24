@@ -1,0 +1,22 @@
+[package]
+name = "ziponline"
+version = "0.1.0"
+edition = "2024"
+
+authors = ["OgGhostJelly"]
+license = "MIT"
+description = "Extract files from a zip over HTTP range requests, fast."
+repository = "https://github.com/ogghostjelly/ziponline"
+keywords = ["async", "archive", "compression", "zip"]
+categories = ["compression"]
+
+[dependencies]
+bytes = "1.10.1"
+futures = { version = "0.3.31", default-features = false }
+inflate = "0.4.5"
+thiserror = "2.0.17"
+
+[dependencies.reqwest]
+version = "0.12.23"
+default-features = false
+features = ["stream"]
