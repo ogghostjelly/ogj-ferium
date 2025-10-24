@@ -38,3 +38,4 @@ regex = "1.11"
 sha1 = "0.10"
 zip = "2.5"
 mod_version = { path = "mod_version" }
+ziponline = { path = "ziponline" }
