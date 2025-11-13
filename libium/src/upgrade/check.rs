@@ -122,11 +122,14 @@ impl Filter {
     }
 }
 
-/// Assumes that the provided `download_files` are sorted in the order of preference (e.g. chronological)
-pub async fn select_latest(
+/// Ensure download files are compatible with the filters.
+pub async fn verify_compatible(
     download_files: impl Iterator<Item = &Metadata> + Clone,
     filters: Vec<Filter>,
-) -> Result<usize> {
+) -> Result<()> {
+    // TBH, I don't have any idea what this code does,
+    // and I can't really be bothered to figure it out...
+
     let mut filter_results = vec![];
     let mut run_last = vec![];
 
@@ -189,7 +192,7 @@ pub async fn select_latest(
     }
     let mut filter_results = filter_results.into_iter();
 
-    let final_index = filter_results
+    filter_results
         .next()
         .and_then(|set_1| {
             filter_results
@@ -197,9 +200,9 @@ pub async fn select_latest(
                     set_a.intersection(&set_b).copied().collect_hashset()
                 })
                 .into_iter()
-                .min()
+                .next()
         })
         .ok_or(Error::IntersectFailure)?;
 
-    Ok(final_index)
+    Ok(())
 }

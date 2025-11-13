@@ -342,7 +342,7 @@ pub async fn github(
 
     if let Some(download_files) = perform_checks {
         // Check if the repo is compatible
-        check::select_latest(
+        check::verify_compatible(
             download_files.iter(),
             if override_profile {
                 profile.filters.clone()
@@ -393,7 +393,7 @@ pub async fn modrinth(
     // Check if the project is compatible
     } else {
         if perform_checks {
-            check::select_latest(
+            check::verify_compatible(
                 [Metadata {
                     filename: "".to_owned(),
                     title: "".to_owned(),
@@ -466,7 +466,7 @@ pub async fn curseforge(
     // Check if the mod is compatible
     } else {
         if perform_checks {
-            check::select_latest(
+            check::verify_compatible(
                 [Metadata {
                     filename: "".to_owned(),
                     title: "".to_owned(),

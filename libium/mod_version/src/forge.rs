@@ -10,25 +10,42 @@ pub type ModId = String;
 
 /// A `META-INF/mods.toml` file.
 /// Contains metadata about a forge mod.
-#[derive(Deserialize, PartialEq, Debug)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug)]
 pub struct ModsToml {
     pub mods: Vec<Mod>,
     pub dependencies: HashMap<ModId, Vec<Dependency>>,
 }
 
-#[derive(Deserialize, PartialEq, Eq, Debug)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug)]
 pub struct Mod {
     pub mod_id: ModId,
-    /// Defaults to "1"
-    pub version: Option<MaybeForgeVersion>,
+    pub version: ForgeVersion,
+}
+
+/// `META-INF/mods.toml` before string substitution.
+#[derive(Deserialize, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UnsubstitutedModsToml {
+    pub mods: Vec<UnsubstitutedMod>,
+    pub dependencies: HashMap<ModId, Vec<Dependency>>,
+}
+
+#[derive(Deserialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UnsubstitutedMod {
+    pub mod_id: ModId,
+    #[serde(default = "default_version")]
+    pub version: UnsubstitutedForgeVersion,
+}
+
+fn default_version() -> UnsubstitutedForgeVersion {
+    UnsubstitutedForgeVersion::ForgeVersion(ForgeVersion::parse("1").unwrap())
 }
 
 /// Can be a forge version or if the string "${file.jarVersion}" is used,
 /// forge will replace the string with the 'Implementation Version' specified in the jar manifest.
 #[derive(PartialEq, Eq, Debug)]
-pub enum MaybeForgeVersion {
+pub enum UnsubstitutedForgeVersion {
     ForgeVersion(ForgeVersion),
     ImplementationVersion,
 }
@@ -41,7 +58,7 @@ pub struct Dependency {
     pub version_range: ForgeVersionRange,
 }
 
-impl<'de> Deserialize<'de> for MaybeForgeVersion {
+impl<'de> Deserialize<'de> for UnsubstitutedForgeVersion {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: de::Deserializer<'de>,
@@ -49,7 +66,7 @@ impl<'de> Deserialize<'de> for MaybeForgeVersion {
         struct V;
 
         impl<'de> de::Visitor<'de> for V {
-            type Value = MaybeForgeVersion;
+            type Value = UnsubstitutedForgeVersion;
 
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 write!(f, "a forge version")
@@ -60,11 +77,11 @@ impl<'de> Deserialize<'de> for MaybeForgeVersion {
                 E: de::Error,
             {
                 if v == "${file.jarVersion}" {
-                    return Ok(MaybeForgeVersion::ImplementationVersion);
+                    return Ok(UnsubstitutedForgeVersion::ImplementationVersion);
                 }
 
                 ForgeVersion::parse(v)
-                    .map(MaybeForgeVersion::ForgeVersion)
+                    .map(UnsubstitutedForgeVersion::ForgeVersion)
                     .map_err(E::custom)
             }
         }
@@ -126,23 +143,23 @@ mod test {
             mandatory=true
             versionRange="[1.19,1.20)""#;
 
-        let v: ModsToml = match toml::from_str(s) {
+        let v: UnsubstitutedModsToml = match toml::from_str(s) {
             Ok(value) => value,
             Err(e) => panic!("{e}"),
         };
         assert_eq!(
             v,
-            ModsToml {
+            UnsubstitutedModsToml {
                 mods: vec![
-                    Mod {
+                    UnsubstitutedMod {
                         mod_id: "examplemod".into(),
-                        version: Some(MaybeForgeVersion::ForgeVersion(
+                        version: UnsubstitutedForgeVersion::ForgeVersion(
                             ForgeVersion::parse("1.0.0.0").unwrap()
-                        )),
+                        ),
                     },
-                    Mod {
+                    UnsubstitutedMod {
                         mod_id: "othermod".into(),
-                        version: Some(MaybeForgeVersion::ImplementationVersion),
+                        version: UnsubstitutedForgeVersion::ImplementationVersion,
                     }
                 ],
                 dependencies: HashMap::from([(

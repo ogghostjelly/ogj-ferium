@@ -1,4 +1,5 @@
 pub mod check;
+pub mod dep_provider;
 pub mod mod_downloadable;
 pub mod modpack_downloadable;
 
@@ -17,20 +18,33 @@ use ferinth::structures::version::{
 use furse::structures::file_structs::{
     File as CFFile, FileRelationType as CFFileRelationType, FileReleaseType,
 };
+use mod_version::{
+    fabric,
+    forge::{self, version::ForgeVersion, UnsubstitutedForgeVersion},
+    jar_manifest::{self, extract_implementation_version},
+};
 use octocrab::models::repos::{Asset as GHAsset, Release as GHRelease};
 use reqwest::{Client, Url};
 use std::{
     fs::{create_dir_all, rename, OpenOptions},
-    io::{BufWriter, Write},
+    io::{self, BufWriter, Read, Write},
     path::{Path, PathBuf},
     str::FromStr,
 };
+use ziponline::LazyZipFile;
 
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
 pub enum Error {
     ReqwestError(#[from] reqwest::Error),
     IOError(#[from] std::io::Error),
+    ZipError(#[from] ziponline::Error),
+    #[error("parse fabric.mod.json: {0}")]
+    ParseFabricModJsonError(serde_json::Error),
+    #[error("parse {0}: {1}")]
+    ParseModsTomlError(&'static str, toml::de::Error),
+    #[error("parse MANIFEST.MF: {0}")]
+    ParseJarManifestError(#[from] jar_manifest::Error),
 }
 type Result<T> = std::result::Result<T, Error>;
 
@@ -71,6 +85,10 @@ pub struct DistributionDeniedError(pub i32, pub i32);
 pub fn try_from_cf_file(
     file: CFFile,
 ) -> std::result::Result<(Metadata, DownloadData), DistributionDeniedError> {
+    let download_url = file
+        .download_url
+        .ok_or(DistributionDeniedError(file.mod_id, file.id))?;
+
     Ok((
         Metadata {
             title: file.display_name,
@@ -89,9 +107,7 @@ pub fn try_from_cf_file(
             game_versions: file.game_versions,
         },
         DownloadData {
-            download_url: file
-                .download_url
-                .ok_or(DistributionDeniedError(file.mod_id, file.id))?,
+            download_url,
             output: file.file_name.as_str().into(),
             length: file.file_length as usize,
             dependencies: file
@@ -254,6 +270,99 @@ pub fn from_gh_asset(asset: GHAsset) -> DownloadData {
         dependencies: Vec::new(),
         conflicts: Vec::new(),
     }
+}
+
+pub async fn fetch_fabric_manifest(
+    client: &Client,
+    url: &Url,
+    filesize: Option<usize>,
+) -> Result<Option<fabric::ModJson>> {
+    let Some(rdr) = extract_file(client, url, filesize, "fabric.mod.json").await? else {
+        return Ok(None);
+    };
+    let manifest: fabric::ModJson =
+        serde_json::from_reader(rdr).map_err(Error::ParseFabricModJsonError)?;
+    return Ok(Some(manifest));
+}
+
+pub async fn fetch_forge_manifest(
+    client: &Client,
+    url: &Url,
+    filesize: Option<usize>,
+) -> Result<Option<forge::ModsToml>> {
+    fetch_forgelike_manifest(client, url, filesize, "META-INF/mods.toml").await
+}
+
+pub async fn fetch_neoforge_manifest(
+    client: &Client,
+    url: &Url,
+    filesize: Option<usize>,
+) -> Result<Option<forge::ModsToml>> {
+    fetch_forgelike_manifest(client, url, filesize, "META-INF/neoforge.mods.toml").await
+}
+
+async fn fetch_forgelike_manifest(
+    client: &Client,
+    url: &Url,
+    filesize: Option<usize>,
+    filename: &'static str,
+) -> Result<Option<forge::ModsToml>> {
+    let mut file = ziponline::LazyZipFile::new(client.clone(), url.clone(), filesize).await?;
+    let buf = extract_string(&mut file, filename).await?;
+
+    let manifest: forge::UnsubstitutedModsToml =
+        toml::from_str(&buf).map_err(|e| Error::ParseModsTomlError(filename, e))?;
+    let mut mods = Vec::with_capacity(manifest.mods.len());
+    let mut implementation_version: Option<ForgeVersion> = None;
+
+    for mod_ in manifest.mods {
+        // TODO: this code is pretty ugly, maybe rewrite it.
+        //       it the forge version is set to "${file.jarVersion}"
+        //       it substitutes it with the Implementation-Version in MANIFEST.MF
+        let version = match mod_.version {
+            UnsubstitutedForgeVersion::ForgeVersion(version) => version,
+            UnsubstitutedForgeVersion::ImplementationVersion => {
+                match implementation_version.clone() {
+                    Some(version) => version,
+                    None => {
+                        let s = extract_string(&mut file, "META-INF/MANIFEST.MF").await?;
+                        implementation_version = Some(extract_implementation_version(&s)?);
+                        implementation_version.clone().unwrap()
+                    }
+                }
+            }
+        };
+
+        mods.push(forge::Mod {
+            mod_id: mod_.mod_id,
+            version,
+        });
+    }
+
+    Ok(Some(forge::ModsToml {
+        mods,
+        dependencies: manifest.dependencies,
+    }))
+}
+
+async fn extract_file<'c>(
+    client: &'c Client,
+    url: &'c Url,
+    filesize: Option<usize>,
+    filename: &'c str,
+) -> Result<Option<impl io::Read + use<'c>>> {
+    match ziponline::extract_file(client, url, filesize, filename).await {
+        Ok(x) => Ok(Some(x)),
+        Err(ziponline::Error::CdFileNotFound) => Ok(None),
+        Err(e) => return Err(Error::ZipError(e)),
+    }
+}
+
+async fn extract_string(file: &mut LazyZipFile, filename: &str) -> Result<String> {
+    let mut rdr = file.extract_file(filename).await?;
+    let mut buf = String::new();
+    rdr.read_to_string(&mut buf)?;
+    Ok(buf)
 }
 
 impl DownloadData {

@@ -109,10 +109,10 @@ impl<S: ParserStream> Parser<S> {
 
 type ParserStreamItem = std::result::Result<Bytes, reqwest::Error>;
 pub trait ParserStream:
-    TryStream<Item = ParserStreamItem, Ok = Bytes, Error = reqwest::Error> + Unpin
+    TryStream<Item = ParserStreamItem, Ok = Bytes, Error = reqwest::Error> + Unpin + Send
 {
 }
-impl<T: TryStream<Item = ParserStreamItem, Ok = Bytes, Error = reqwest::Error> + Unpin> ParserStream
-    for T
+impl<T: TryStream<Item = ParserStreamItem, Ok = Bytes, Error = reqwest::Error> + Unpin + Send>
+    ParserStream for T
 {
 }

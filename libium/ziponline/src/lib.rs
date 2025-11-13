@@ -35,7 +35,7 @@
 #![warn(clippy::cargo)]
 #![warn(missing_docs)]
 #![allow(clippy::let_unit_value)]
-use std::{collections::HashMap, io, num::ParseIntError, rc::Rc};
+use std::{collections::HashMap, io, num::ParseIntError, sync::Arc};
 
 use bytes::Buf;
 use reqwest::{Client, IntoUrl, Url, header::ToStrError};
@@ -53,7 +53,7 @@ mod structs;
 pub struct LazyZipFile {
     client: Client,
     url: Url,
-    headers: HashMap<String, Rc<Cdfh>>,
+    headers: HashMap<String, Arc<Cdfh>>,
     cd: CdParser<BoxParserStream>,
 }
 
@@ -98,14 +98,15 @@ impl LazyZipFile {
     /// Returns an io::Read to the raw contents of the file.
     pub async fn extract_file(&mut self, filename: &str) -> Result<impl io::Read> {
         let cdfh = match self.headers.get(filename) {
-            Some(cdfh) => Some(Rc::clone(cdfh)),
+            Some(cdfh) => Some(Arc::clone(cdfh)),
             None => loop {
                 let Some(cdfh) = self.cd.next().await? else {
                     break None;
                 };
 
-                let cdfh = Rc::new(cdfh);
-                self.headers.insert(cdfh.filename.clone(), Rc::clone(&cdfh));
+                let cdfh = Arc::new(cdfh);
+                self.headers
+                    .insert(cdfh.filename.clone(), Arc::clone(&cdfh));
                 if cdfh.filename == filename {
                     break Some(cdfh);
                 }

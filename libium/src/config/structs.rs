@@ -1,7 +1,7 @@
 use super::filters::Filter;
 use derive_more::derive::Display;
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, str::FromStr};
+use std::{fmt, path::PathBuf, str::FromStr};
 
 #[derive(Deserialize, Serialize, Debug, Default, Clone)]
 pub struct Config {
@@ -174,7 +174,7 @@ const fn is_false(b: &bool) -> bool {
     !*b
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ModIdentifier {
     CurseForgeProject(i32),
     ModrinthProject(String),
@@ -183,6 +183,21 @@ pub enum ModIdentifier {
     PinnedCurseForgeProject(i32, i32),
     PinnedModrinthProject(String, String),
     PinnedGitHubRepository((String, String), i32),
+}
+
+impl fmt::Display for ModIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ModIdentifier::CurseForgeProject(id) => write!(f, "cf:{id}"),
+            ModIdentifier::ModrinthProject(id) => write!(f, "mr:{id}"),
+            ModIdentifier::GitHubRepository(owner, repo) => write!(f, "gh:{owner}/{repo}"),
+            ModIdentifier::PinnedCurseForgeProject(id, pin) => write!(f, "cf:{id}*{pin}"),
+            ModIdentifier::PinnedModrinthProject(id, pin) => write!(f, "mr:{id}*{pin}"),
+            ModIdentifier::PinnedGitHubRepository((owner, repo), pin) => {
+                write!(f, "gh:{owner}/{repo}*{pin}")
+            }
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Display, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
