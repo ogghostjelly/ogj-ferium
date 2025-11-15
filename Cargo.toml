@@ -9,6 +9,10 @@ serde_json = "1.0"
 octocrab = "0.44"
 ferinth = "2.12"
 furse = "1.6"
+tokio = { version = "1.44", default-features = false, features = [
+    "rt-multi-thread",
+    "macros",
+] }
 
 [package]
 
@@ -57,14 +61,11 @@ ferinth.workspace = true
 reqwest.workspace = true
 furse.workspace = true
 clap.workspace = true
+tokio.workspace = true
 
 rfd = { version = "0.15", optional = true, default-features = false, features = [
     "xdg-portal",
     "tokio",
-] }
-tokio = { version = "1.44", default-features = false, features = [
-    "rt-multi-thread",
-    "macros",
 ] }
 clap_complete = "4.5"
 parking_lot = "0.12"

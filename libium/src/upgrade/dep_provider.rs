@@ -1,18 +1,17 @@
 mod structs;
 
-use futures_executor::ThreadPool;
-use futures_util::{
-    future::{try_join_all, RemoteHandle},
-    task::SpawnExt,
-};
+use futures_util::{future::try_join_all, FutureExt};
 use pubgrub::{PubGrubError, VersionSet};
 use reqwest::Client;
 use std::{
+    any::Any,
     cell::RefCell,
     cmp,
     collections::{hash_map::Entry, HashMap},
-    io,
+    fmt,
     rc::Rc,
+    sync::mpsc,
+    thread,
 };
 use structs::Package;
 
@@ -30,25 +29,60 @@ use crate::{
     },
 };
 
+pub use structs::Fabric;
+pub use structs::Forge;
+
 pub struct DependencyProvider<R: Resolver> {
-    profile: Profile,
-    pool: ThreadPool,
+    dependencies: DataDependencies<R>,
     cache: RefCell<Cache<R>>,
+    tx: mpsc::Sender<ModIdentifier>,
+    rx: mpsc::Receiver<DataPacket<R>>,
 }
 
+type DataDependencies<R> =
+    pubgrub::DependencyConstraints<Package, VersionRange<<R as Resolver>::Range>>;
+type DataPacket<R> = (ModIdentifier, Vec<ResolutionData<R>>);
+
 impl<R: Resolver> DependencyProvider<R> {
-    pub fn new(profile: Profile) -> Result<Self, ErrorIn> {
+    pub fn new(
+        dependencies: DataDependencies<R>,
+        tx: mpsc::Sender<ModIdentifier>,
+        rx: mpsc::Receiver<DataPacket<R>>,
+    ) -> Result<Self, ErrorIn> {
         Ok(Self {
-            profile,
-            pool: ThreadPool::new().map_err(ErrorIn::CreateThreadPool)?,
+            dependencies,
             cache: RefCell::new(Cache {
                 download_files: HashMap::new(),
             }),
+            tx,
+            rx,
         })
     }
+}
 
-    pub fn solve(self) -> Result<Vec<DownloadData>, Error<R>> {
-        let pkgs = pubgrub::resolve(&self, Package::Root, Version::Root)?;
+pub async fn solve<R: Resolver>(profile: Profile) -> Result<Vec<DownloadData>, Error<R>> {
+    let (res_tx, data_rx) = mpsc::channel();
+    let (data_tx, res_rx) = mpsc::channel();
+
+    let handle = start_resolver_thread::<R>(&profile, res_tx, res_rx);
+    process_data_requests(handle, profile.filters, data_tx, data_rx).await
+}
+
+fn start_resolver_thread<R: Resolver>(
+    profile: &Profile,
+    tx: mpsc::Sender<ModIdentifier>,
+    rx: mpsc::Receiver<DataPacket<R>>,
+) -> thread::JoinHandle<Result<Vec<DownloadData>, Error<R>>> {
+    let dependencies: DataDependencies<R> = profile
+        .mods
+        .iter()
+        .map(|mod_| (Package::Id(mod_.identifier.clone()), VersionRange::full()))
+        .collect();
+
+    std::thread::spawn(|| {
+        let dep_provider = DependencyProvider::<R>::new(dependencies, tx, rx)?;
+        let pkgs = pubgrub::resolve(&dep_provider, Package::Root, Version::Root)?;
+        println!("\nDONE! pkgs: {pkgs:?}");
         let mut ret = Vec::with_capacity(pkgs.len());
 
         for (pkg, version) in pkgs {
@@ -57,7 +91,7 @@ impl<R: Resolver> DependencyProvider<R> {
                 Package::Id(id) => id,
             };
 
-            let data = self.fetch_download_files(&id)?;
+            let data = dep_provider.fetch_download_files(&id)?;
             let Some(data) = get_package_version(&data, &version)? else {
                 continue;
             };
@@ -66,7 +100,49 @@ impl<R: Resolver> DependencyProvider<R> {
         }
 
         Ok(ret)
+    })
+}
+
+async fn process_data_requests<R: Resolver>(
+    resolver_thread: thread::JoinHandle<Result<Vec<DownloadData>, Error<R>>>,
+    filters: Vec<Filter>,
+    tx: mpsc::Sender<DataPacket<R>>,
+    rx: mpsc::Receiver<ModIdentifier>,
+) -> Result<Vec<DownloadData>, Error<R>> {
+    let client = Client::new();
+    let mut futs = vec![];
+
+    loop {
+        if resolver_thread.is_finished() {
+            break;
+        }
+
+        while let Ok(id) = rx.try_recv() {
+            println!("GET {id}");
+            let fut = fetch_data::<R>(client.clone(), id.clone(), filters.clone());
+            let fut = fut.map(|data| data.map(|d| (id, d)));
+            futs.push(tokio::task::spawn(fut));
+        }
+
+        let mut new_futs = vec![];
+
+        for fut in futs {
+            if fut.is_finished() {
+                let data = fut.await.map_err(ErrorIn::JoinThread)??;
+                tx.send(data).map_err(Error::ThreadSend)?;
+            } else {
+                new_futs.push(fut);
+            }
+        }
+
+        futs = new_futs;
+
+        tokio::task::yield_now().await;
     }
+
+    resolver_thread
+        .join()
+        .map_err(ErrorIn::JoinResolverThread)?
 }
 
 impl<R: Resolver> pubgrub::DependencyProvider for DependencyProvider<R> {
@@ -84,11 +160,14 @@ impl<R: Resolver> pubgrub::DependencyProvider for DependencyProvider<R> {
 
     fn prioritize(
         &self,
-        _package: &Self::P,
-        _range: &Self::VS,
+        package: &Self::P,
+        range: &Self::VS,
         package_conflicts_counts: &pubgrub::PackageResolutionStatistics,
     ) -> Self::Priority {
-        package_conflicts_counts.conflict_count()
+        println!("\nprioritize({package}, {range})");
+        let count = package_conflicts_counts.conflict_count();
+        println!("package_conflicts_counts: {count}");
+        count
     }
 
     fn choose_version(
@@ -96,6 +175,7 @@ impl<R: Resolver> pubgrub::DependencyProvider for DependencyProvider<R> {
         package: &Self::P,
         range: &Self::VS,
     ) -> Result<Option<Self::V>, Self::Err> {
+        println!("\nchoose_version({package}, {range})");
         let id = match package {
             Package::Root => return Ok(Some(Version::Root)),
             Package::Id(id) => id,
@@ -129,13 +209,10 @@ impl<R: Resolver> pubgrub::DependencyProvider for DependencyProvider<R> {
         package: &Self::P,
         version: &Self::V,
     ) -> Result<pubgrub::Dependencies<Self::P, Self::VS, Self::M>, Self::Err> {
+        println!("\nget_dependencies({package}, {version})");
         let id = match package {
             Package::Root => {
-                let mut dependencies = pubgrub::DependencyConstraints::default();
-                for mod_ in &self.profile.mods {
-                    dependencies.insert(Package::Id(mod_.identifier.clone()), VersionRange::full());
-                }
-                return Ok(pubgrub::Dependencies::Available(dependencies));
+                return Ok(pubgrub::Dependencies::Available(self.dependencies.clone()));
             }
             Package::Id(id) => id,
         };
@@ -149,12 +226,18 @@ impl<R: Resolver> pubgrub::DependencyProvider for DependencyProvider<R> {
                 for id in &x.data.dependencies {
                     dependencies.insert(Package::Id(id.clone()), VersionRange::full());
                 }
+                println!("dependencies: {:?}", dependencies);
                 Ok(pubgrub::Dependencies::Available(dependencies))
             }
-            None => Ok(pubgrub::Dependencies::Available(
-                pubgrub::DependencyConstraints::default(),
-            )),
+            None => Ok(pubgrub::Dependencies::Available(dbg!(
+                pubgrub::DependencyConstraints::default()
+            ))),
         }
+    }
+
+    fn should_cancel(&self) -> Result<(), Self::Err> {
+        println!("\nshould_cancel()");
+        Ok(())
     }
 }
 
@@ -185,11 +268,8 @@ struct Cache<R: Resolver> {
     download_files: HashMap<ModIdentifier, Data<R>>,
 }
 
-/// A thread handle for an api request.
-type RequestHandle<R> = RemoteHandle<Result<Vec<ResolutionData<R>>, ErrorIn>>;
-
 enum Data<R: Resolver> {
-    Pending(RequestHandle<R>),
+    Pending,
     Resolved(Rc<Vec<ResolutionData<R>>>),
 }
 
@@ -199,15 +279,17 @@ impl<R: Resolver> DependencyProvider<R> {
         &self,
         id: &ModIdentifier,
     ) -> Result<Rc<Vec<ResolutionData<R>>>, ErrorIn> {
-        let files = self.fetch_download_files_inner(id)?;
+        println!("fetch_download_files({id})");
+        let mut cache = self.cache.borrow_mut();
+        let files = self.fetch_download_files_inner(&mut cache, id)?;
 
         // Prefetch data
         for data in files.as_ref() {
             for id in &data.data.dependencies {
-                self.prefetch_download_files(id)?;
+                self.prefetch_download_files(&mut cache, id)?;
             }
             for id in &data.data.conflicts {
-                self.prefetch_download_files(id)?;
+                self.prefetch_download_files(&mut cache, id)?;
             }
         }
 
@@ -216,42 +298,68 @@ impl<R: Resolver> DependencyProvider<R> {
 
     fn fetch_download_files_inner(
         &self,
+        cache: &mut Cache<R>,
         id: &ModIdentifier,
     ) -> Result<Rc<Vec<ResolutionData<R>>>, ErrorIn> {
-        match self.cache.borrow_mut().download_files.entry(id.clone()) {
-            Entry::Occupied(mut entry) => Ok(match entry.get_mut() {
-                Data::Pending(handle) => Rc::new(futures_executor::block_on(handle)?),
-                Data::Resolved(data) => data.clone(),
-            }),
-            Entry::Vacant(entry) => {
-                let handle = self.fetch_handle(id)?;
-                let data = Rc::new(futures_executor::block_on(handle)?);
-                entry.insert(Data::Resolved(data.clone()));
-                Ok(data)
+        match cache.download_files.entry(id.clone()) {
+            Entry::Occupied(mut entry) => match entry.get_mut() {
+                Data::Pending => self.wait_for(cache, id),
+                Data::Resolved(data) => Ok(data.clone()),
+            },
+            Entry::Vacant(_) => {
+                self.request_id(cache, id)?;
+                self.wait_for(cache, id)
             }
         }
     }
 
     /// Make a request to get mod metadata and keep it in the cache so future requests for this mod don't have to wait.
-    fn prefetch_download_files(&self, id: &ModIdentifier) -> Result<(), ErrorIn> {
-        match self.cache.borrow_mut().download_files.entry(id.clone()) {
-            Entry::Occupied(_) => Ok(()),
-            Entry::Vacant(entry) => {
-                let handle = self.fetch_handle(id)?;
-                entry.insert(Data::Pending(handle));
-                Ok(())
+    fn prefetch_download_files(
+        &self,
+        cache: &mut Cache<R>,
+        id: &ModIdentifier,
+    ) -> Result<(), ErrorIn> {
+        if !cache.download_files.contains_key(id) {
+            self.request_id(cache, id)?;
+        }
+        Ok(())
+    }
+
+    fn wait_for(
+        &self,
+        cache: &mut Cache<R>,
+        id: &ModIdentifier,
+    ) -> Result<Rc<Vec<ResolutionData<R>>>, ErrorIn> {
+        println!("WAIT FOR {id}");
+        loop {
+            let (recv_id, data) = self.rx.recv()?;
+            println!("RECV {recv_id}");
+            let data = Rc::new(data);
+            let is_match = recv_id == *id;
+            self.store_in_cache(cache, recv_id, data.clone());
+            if is_match {
+                break Ok(data);
             }
         }
     }
 
-    /// Make a request to get mod metadata and return a thread handle to the requesting process.
-    fn fetch_handle(&self, id: &ModIdentifier) -> Result<RequestHandle<R>, ErrorIn> {
-        let fut = fetch_data(Client::new(), id.clone(), self.profile.filters.clone());
-        Ok(self.pool.spawn_with_handle(fut)?)
+    fn request_id(&self, cache: &mut Cache<R>, id: &ModIdentifier) -> Result<(), ErrorIn> {
+        self.tx.send(id.clone())?;
+        cache.download_files.insert(id.clone(), Data::Pending);
+        Ok(())
+    }
+
+    fn store_in_cache(
+        &self,
+        cache: &mut Cache<R>,
+        id: ModIdentifier,
+        data: Rc<Vec<ResolutionData<R>>>,
+    ) {
+        cache.download_files.insert(id, Data::Resolved(data));
     }
 }
 
-async fn fetch_data<R: Resolver>(
+pub async fn fetch_data<R: Resolver>(
     client: Client,
     id: ModIdentifier,
     profile_filters: Vec<Filter>,
@@ -270,24 +378,43 @@ async fn fetch_data<R: Resolver>(
     }
 
     let futs = data.into_iter().map(|x| fetch(&client, x));
-
-    try_join_all(futs).await
+    println!("fetch manifest");
+    let x = try_join_all(futs).await?;
+    println!("DONE");
+    Ok(x)
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error)]
+#[error(transparent)]
 pub enum Error<R: Resolver> {
     Internal(#[from] ErrorIn),
     Resolution(#[from] PubGrubError<DependencyProvider<R>>),
+    #[error("send resolution data: {0}")]
+    ThreadSend(mpsc::SendError<DataPacket<R>>),
+}
+
+impl<R: Resolver> fmt::Debug for Error<R> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Internal(arg0) => f.debug_tuple("Internal").field(arg0).finish(),
+            Self::Resolution(arg0) => f.debug_tuple("Resolution").field(arg0).finish(),
+            Self::ThreadSend(arg0) => f.debug_tuple("ThreadSend").field(arg0).finish(),
+        }
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum ErrorIn {
-    #[error("thread pool spawn: {0}")]
-    ThreadPoolSpawn(#[from] futures_util::task::SpawnError),
     #[error("download: {0}")]
     Download(#[from] mod_downloadable::Error),
     #[error("upgrade: {0}")]
     Upgrade(#[from] upgrade::Error),
-    #[error("create thread pool: {0}")]
-    CreateThreadPool(io::Error),
+    #[error("join request thread: {0}")]
+    JoinThread(tokio::task::JoinError),
+    #[error("join resolver thread: {0:?}")]
+    JoinResolverThread(Box<dyn Any + Send + 'static>),
+    #[error("resolver: {0}")]
+    SendRequest(#[from] mpsc::SendError<ModIdentifier>),
+    #[error("resolver: {0}")]
+    RecvRequest(#[from] mpsc::RecvError),
 }

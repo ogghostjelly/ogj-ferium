@@ -3,7 +3,6 @@ use std::{
     collections::HashMap,
     fmt::{self, Debug, Display},
     future::Future,
-    rc::Rc,
 };
 
 use derive_more::Display;
@@ -31,6 +30,7 @@ pub trait Resolver: 'static {
     type Manifest: ManifestLike<R = Self> + Send;
 }
 
+#[derive(Debug)]
 pub struct Forge;
 
 impl Resolver for Forge {
@@ -38,6 +38,7 @@ impl Resolver for Forge {
     type Manifest = forge::ModsToml;
 }
 
+#[derive(Debug)]
 pub struct Fabric;
 
 impl Resolver for Fabric {
@@ -59,37 +60,54 @@ pub enum Version<V> {
 
 #[derive(PartialEq, Eq, Clone, Debug, PartialOrd, Ord)]
 pub enum VersionRange<R: RangeLike> {
+    Root,
     Eq(R),
-    Not(Rc<VersionRange<R>>),
-    And(Rc<(VersionRange<R>, VersionRange<R>)>),
+    Not(Box<VersionRange<R>>),
+    And(Box<(VersionRange<R>, VersionRange<R>)>),
+}
+
+impl<R: RangeLike> VersionRange<R> {
+    fn is_empty(&self) -> bool {
+        matches!(self, VersionRange::Eq(r) if r.is_empty())
+    }
 }
 
 impl<R: RangeLike> pubgrub::VersionSet for VersionRange<R> {
     type V = Version<R::Version>;
 
     fn empty() -> Self {
-        Self::Not(Rc::new(Self::Eq(R::empty())))
+        Self::Eq(R::empty())
     }
 
     fn singleton(v: Self::V) -> Self {
         match v {
-            Version::Root => todo!(),
+            Version::Root => Self::Root,
             Version::Version(v) => Self::Eq(R::only(v)),
         }
     }
 
     fn complement(&self) -> Self {
-        Self::Not(Rc::new(self.clone()))
+        match self {
+            Self::Not(set) => (**set).clone(),
+            _ => Self::Not(self.clone().into()),
+        }
     }
 
     fn intersection(&self, other: &Self) -> Self {
-        Self::And(Rc::new((self.clone(), other.clone())))
+        match (self, other) {
+            (Self::Not(a), b) if **a == *b => Self::empty(),
+            (a, Self::Not(b)) if *a == **b => Self::empty(),
+            (a, b) if a.is_empty() || b.is_empty() => Self::empty(),
+            (a, b) if a == b => a.clone(),
+            _ => Self::And((self.clone(), other.clone()).into()),
+        }
     }
 
     fn contains(&self, v: &Self::V) -> bool {
         match self {
+            VersionRange::Root => matches!(v, Version::Root),
             VersionRange::Eq(r) => match v {
-                Version::Root => true,
+                Version::Root => false,
                 Version::Version(v) => r.matches(v),
             },
             VersionRange::Not(range) => !range.contains(v),
@@ -101,6 +119,7 @@ impl<R: RangeLike> pubgrub::VersionSet for VersionRange<R> {
 impl<R: RangeLike> fmt::Display for VersionRange<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            VersionRange::Root => write!(f, "root"),
             VersionRange::Eq(r) => write!(f, "{r}"),
             VersionRange::Not(r) => write!(f, "not {r}"),
             VersionRange::And(x) => write!(f, "({} and {})", x.0, x.1),
@@ -108,15 +127,69 @@ impl<R: RangeLike> fmt::Display for VersionRange<R> {
     }
 }
 
-pub trait VersionLike: Ord + Clone + Display + Debug {}
+#[cfg(test)]
+mod version_range {
+    use super::*;
+
+    fn version(s: &str) -> Version<FabricVersion> {
+        Version::Version(FabricVersion::parse(s, false).unwrap())
+    }
+
+    fn range(s: &str) -> VersionRange<FabricVersionRange> {
+        VersionRange::Eq(FabricVersionRange::parse_single(s).unwrap())
+    }
+
+    #[test]
+    fn compare() {
+        let x = VersionRange::<FabricVersionRange>::Root;
+        assert!(x.contains(&Version::Root));
+        assert!(!x.contains(&version("1.0")));
+
+        let x = VersionRange::<FabricVersionRange>::empty();
+        assert!(!x.contains(&Version::Root));
+        assert!(!x.contains(&version("1.0")));
+
+        let x = VersionRange::<FabricVersionRange>::full();
+        assert!(x.contains(&Version::Root));
+        assert!(x.contains(&version("1.0")));
+
+        let x = VersionRange::<FabricVersionRange>::singleton(version("1.0"));
+        assert!(!x.contains(&Version::Root));
+        assert!(x.contains(&version("1.0")));
+        assert!(!x.contains(&version("1.1")));
+
+        let x = x.complement();
+        assert!(x.contains(&Version::Root));
+        assert!(!x.contains(&version("1.0")));
+        assert!(x.contains(&version("1.1")));
+
+        let x = range(">1.0").intersection(&range("<2.0"));
+        assert!(!x.contains(&version("1.0")));
+        assert!(x.contains(&version("1.5")));
+        assert!(!x.contains(&version("2.0")));
+
+        let x = range(">1.0 <2.0").union(&range(">3.0 <4.0"));
+        assert!(!x.contains(&version("1.0")));
+        assert!(x.contains(&version("1.5")));
+        assert!(!x.contains(&version("2.0")));
+        assert!(!x.contains(&version("3.0")));
+        assert!(x.contains(&version("3.5")));
+        assert!(!x.contains(&version("4.0")));
+    }
+}
+
+pub trait VersionLike: Ord + Clone + Display + Debug + Send + Sync {}
 impl VersionLike for ForgeVersion {}
 impl VersionLike for FabricVersion {}
 
-pub trait RangeLike: Eq + Clone + Display + Debug {
+pub trait RangeLike: Eq + Clone + Display + Debug + Send + Sync {
     type Version: VersionLike;
     fn empty() -> Self;
     fn only(v: Self::Version) -> Self;
     fn matches(&self, v: &Self::Version) -> bool;
+    fn is_empty(&self) -> bool {
+        *self == Self::empty()
+    }
 }
 impl RangeLike for ForgeVersionRange {
     type Version = ForgeVersion;

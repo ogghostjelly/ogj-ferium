@@ -70,13 +70,13 @@ impl TryFrom<u64> for SchemaVersion {
 }
 
 #[derive(Deserialize, PartialEq, Eq, Debug, Hash, Clone)]
-#[serde(try_from = "&str")]
+#[serde(try_from = "String")]
 pub struct ModId(pub String);
 
-impl TryFrom<&str> for ModId {
+impl TryFrom<String> for ModId {
     type Error = Error;
 
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
+    fn try_from(value: String) -> Result<Self, Self::Error> {
         if (2..=64).contains(&value.len()) {
             Ok(ModId(value.to_string()))
         } else {
@@ -116,7 +116,7 @@ impl<'de> Deserialize<'de> for FabricVersionRange {
             where
                 A: de::SeqAccess<'de>,
             {
-                let mut ls: Vec<&str> = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+                let mut ls: Vec<String> = Vec::with_capacity(seq.size_hint().unwrap_or(0));
                 while let Some(value) = seq.next_element()? {
                     ls.push(value);
                 }
@@ -124,7 +124,7 @@ impl<'de> Deserialize<'de> for FabricVersionRange {
             }
         }
 
-        deserializer.deserialize_str(V)
+        deserializer.deserialize_any(V)
     }
 }
 
@@ -176,7 +176,10 @@ mod test {
             "description": "Lorem ipsum dolor sit amet.",
             "environment": "client",
             "depends": {
-                "minecraft": "1.20.1"
+                "minecraft": [
+                    "1.21",
+                    "1.20.1"
+                ]
             },
             "jars": [
                 {
@@ -201,7 +204,7 @@ mod test {
                 }],
                 depends: HashMap::from([(
                     ModId("minecraft".into()),
-                    FabricVersionRange::parse_single("1.20.1").unwrap()
+                    FabricVersionRange::parse_many(["1.21", "1.20.1"].iter()).unwrap()
                 )]),
                 recommends: Default::default(),
                 suggests: Default::default(),

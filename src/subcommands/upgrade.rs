@@ -11,9 +11,13 @@ use libium::{
         filters::ProfileParameters as _,
         structs::{Mod, ModIdentifier, ModLoader, Profile},
     },
-    upgrade::{mod_downloadable, DownloadData},
+    upgrade::{
+        dep_provider::{self, DependencyProvider, Fabric},
+        mod_downloadable, DownloadData,
+    },
 };
 use parking_lot::Mutex;
+use reqwest::Client;
 use std::{
     fs::read_dir,
     mem::take,
@@ -22,6 +26,7 @@ use std::{
 };
 use tokio::task::JoinSet;
 
+/*TODO:
 /// Get the latest compatible downloadable for the mods in `profile`
 ///
 /// If an error occurs with a resolving task, instead of failing immediately,
@@ -149,10 +154,18 @@ pub async fn get_platform_downloadables(profile: &Profile) -> Result<(Vec<Downlo
     let to_download = tasks.into_iter().flatten().collect();
 
     Ok((to_download, error))
-}
+}*/
 
 pub async fn upgrade(profile: &Profile) -> Result<()> {
-    let (mut to_download, error) = get_platform_downloadables(profile).await?;
+    //TODO: let (mut to_download, error) = get_platform_downloadables(profile).await?;
+
+    let (mut to_download, error) = (
+        dep_provider::solve::<Fabric>(profile.clone())
+            .await
+            .unwrap(),
+        false,
+    );
+    println!("to_download: {:?}", to_download);
     let mut to_install = Vec::new();
     if profile.output_dir.join("user").exists()
         && profile.filters.mod_loader() != Some(&ModLoader::Quilt)
