@@ -32,6 +32,7 @@ use crate::{
 pub use structs::Fabric;
 pub use structs::Forge;
 
+mod cache;
 mod two_way;
 
 pub struct DependencyProvider<R: Resolver> {
