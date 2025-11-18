@@ -32,6 +32,8 @@ use crate::{
 pub use structs::Fabric;
 pub use structs::Forge;
 
+mod two_way;
+
 pub struct DependencyProvider<R: Resolver> {
     dependencies: DataDependencies<R>,
     cache: RefCell<Cache<R>>,
