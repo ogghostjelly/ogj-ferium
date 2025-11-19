@@ -48,7 +48,7 @@ where
     /// Block and wait until a specified key is recieved from the reciever channel.
     fn wait_on(&mut self, key: K) -> Result<Rc<V>, RecvError> {
         loop {
-            let (k, v) = self.ch.recv()?;
+            let (k, v) = self.ch.rx.recv()?;
             if key != k {
                 self.data.insert(k, Data::Resolved(Rc::new(v)));
             } else {
@@ -60,20 +60,12 @@ where
     }
 
     /// Make a request for a certain key if there is not one already.
-    pub fn try_request(&mut self, t: K) -> Result<(), SendError<K>> {
+    pub fn try_request(&mut self, t: K) -> Result<(), Error<K>> {
         if !self.data.contains_key(&t) {
             self.data.insert(t.clone(), Data::Pending);
             self.ch.tx.send(t)?;
         }
         Ok(())
-    }
-
-    /// Insert data from the reciever channel into the cache.
-    /// Should be called periodically.
-    pub fn recv(&mut self) {
-        for (k, v) in self.ch.rx.try_iter() {
-            self.data.insert(k, Data::Resolved(Rc::new(v)));
-        }
     }
 }
 

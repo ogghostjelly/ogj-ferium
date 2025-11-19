@@ -58,12 +58,23 @@ pub enum Version<V> {
     Version(V),
 }
 
-#[derive(PartialEq, Eq, Clone, Debug, PartialOrd, Ord)]
+#[derive(Eq, Clone, Debug)]
 pub enum VersionRange<R: RangeLike> {
     Root,
     Eq(R),
     Not(Box<VersionRange<R>>),
     And(Box<(VersionRange<R>, VersionRange<R>)>),
+}
+
+impl<R: RangeLike> PartialEq for VersionRange<R> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Eq(l0), Self::Eq(r0)) => l0 == r0,
+            (Self::Not(l0), Self::Not(r0)) => l0 == r0,
+            (Self::And(l0), Self::And(r0)) => l0 == r0,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
 }
 
 impl<R: RangeLike> VersionRange<R> {
