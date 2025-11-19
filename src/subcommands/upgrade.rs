@@ -26,12 +26,11 @@ use std::{
 };
 use tokio::task::JoinSet;
 
-/*TODO:
 /// Get the latest compatible downloadable for the mods in `profile`
 ///
 /// If an error occurs with a resolving task, instead of failing immediately,
 /// resolution will continue and the error return flag is set to true.
-pub async fn get_platform_downloadables(profile: &Profile) -> Result<(Vec<DownloadData>, bool)> {
+pub async fn get_platform_downloadables_(profile: &Profile) -> Result<(Vec<DownloadData>, bool)> {
     let progress_bar = Arc::new(Mutex::new(ProgressBar::new(0).with_style(STYLE_NO.clone())));
     let mut tasks = JoinSet::new();
     let mut done_mods = Vec::new();
@@ -82,7 +81,7 @@ pub async fn get_platform_downloadables(profile: &Profile) -> Result<(Vec<Downlo
             tasks.spawn(async move {
                 let permit = SEMAPHORE.get_or_init(default_semaphore).acquire().await?;
 
-                let result = mod_.fetch_download_file(filters).await;
+                let result: std::result::Result<DownloadData, mod_downloadable::Error> = todo!();
 
                 drop(permit);
 
@@ -154,18 +153,21 @@ pub async fn get_platform_downloadables(profile: &Profile) -> Result<(Vec<Downlo
     let to_download = tasks.into_iter().flatten().collect();
 
     Ok((to_download, error))
-}*/
+}
 
-pub async fn upgrade(profile: &Profile) -> Result<()> {
-    //TODO: let (mut to_download, error) = get_platform_downloadables(profile).await?;
+async fn get_platform_downloadables(profile: &Profile) -> Result<(Vec<DownloadData>, bool)> {
+    println!("{}\n", "Determining the Latest Compatible Versions".bold());
 
-    let (mut to_download, error) = (
+    Ok((
         dep_provider::solve::<Fabric>(profile.clone())
             .await
             .unwrap(),
         false,
-    );
-    println!("to_download: {:?}", to_download);
+    ))
+}
+
+pub async fn upgrade(profile: &Profile) -> Result<()> {
+    let (mut to_download, error) = get_platform_downloadables(profile).await?;
     let mut to_install = Vec::new();
     if profile.output_dir.join("user").exists()
         && profile.filters.mod_loader() != Some(&ModLoader::Quilt)

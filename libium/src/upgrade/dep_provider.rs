@@ -73,7 +73,6 @@ fn start_resolver_thread<R: Resolver>(
     std::thread::spawn(|| {
         let dep_provider = DependencyProvider::<R>::new(dependencies, channel)?;
         let pkgs = pubgrub::resolve(&dep_provider, Package::Root, Version::Root)?;
-        println!("\nDONE! pkgs: {pkgs:?}");
         let mut ret = Vec::with_capacity(pkgs.len());
 
         for (pkg, version) in pkgs {
@@ -108,7 +107,6 @@ async fn process_data_requests<R: Resolver>(
         }
 
         while let Ok(id) = ch.rx.try_recv() {
-            println!("GET {id}");
             let fut = fetch_data::<R>(client.clone(), id.clone(), filters.clone());
             let fut = fut.map(|data| data.map(|d| (id, d)));
             futs.push(tokio::task::spawn(fut));
@@ -150,14 +148,11 @@ impl<R: Resolver> pubgrub::DependencyProvider for DependencyProvider<R> {
 
     fn prioritize(
         &self,
-        package: &Self::P,
-        range: &Self::VS,
+        _package: &Self::P,
+        _range: &Self::VS,
         package_conflicts_counts: &pubgrub::PackageResolutionStatistics,
     ) -> Self::Priority {
-        println!("\nprioritize({package}, {range})");
-        let count = package_conflicts_counts.conflict_count();
-        println!("package_conflicts_counts: {count}");
-        count
+        package_conflicts_counts.conflict_count()
     }
 
     fn choose_version(
@@ -165,7 +160,6 @@ impl<R: Resolver> pubgrub::DependencyProvider for DependencyProvider<R> {
         package: &Self::P,
         range: &Self::VS,
     ) -> Result<Option<Self::V>, Self::Err> {
-        println!("\nchoose_version({package}, {range})");
         let id = match package {
             Package::Root => return Ok(Some(Version::Root)),
             Package::Id(id) => id,
@@ -199,7 +193,6 @@ impl<R: Resolver> pubgrub::DependencyProvider for DependencyProvider<R> {
         package: &Self::P,
         version: &Self::V,
     ) -> Result<pubgrub::Dependencies<Self::P, Self::VS, Self::M>, Self::Err> {
-        println!("\nget_dependencies({package}, {version})");
         let id = match package {
             Package::Root => {
                 return Ok(pubgrub::Dependencies::Available(self.dependencies.clone()));
@@ -258,7 +251,6 @@ impl<R: Resolver> DependencyProvider<R> {
         &self,
         id: &ModIdentifier,
     ) -> Result<Rc<Vec<ResolutionData<R>>>, ErrorIn> {
-        println!("fetch_download_files({id})");
         let mut cache = self.cache.borrow_mut();
         let files = cache.resoluton_data.get(id.clone())?;
 
@@ -295,10 +287,7 @@ pub async fn fetch_data<R: Resolver>(
     }
 
     let futs = data.into_iter().map(|x| fetch(&client, x));
-    println!("fetch manifest");
-    let x = try_join_all(futs).await?;
-    println!("DONE");
-    Ok(x)
+    try_join_all(futs).await
 }
 
 #[derive(thiserror::Error)]

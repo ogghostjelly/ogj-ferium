@@ -277,14 +277,9 @@ pub async fn fetch_fabric_manifest(
     url: &Url,
     filesize: Option<usize>,
 ) -> Result<Option<fabric::ModJson>> {
-    println!("{}", url.path_segments().unwrap().last().unwrap());
     let Some(rdr) = extract_file(client, url, filesize, "fabric.mod.json").await? else {
         return Ok(None);
     };
-    println!(
-        "deserialize {}",
-        url.path_segments().unwrap().last().unwrap()
-    );
     let manifest: fabric::ModJson =
         serde_json::from_reader(rdr).map_err(Error::ParseFabricModJsonError)?;
     return Ok(Some(manifest));
