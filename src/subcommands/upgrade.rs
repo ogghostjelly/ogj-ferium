@@ -189,6 +189,7 @@ async fn get_platform_downloadables(profile: &Profile) -> Result<(Vec<DownloadDa
         Err(e) => bail!("{e}"),
     };
 
+    // TODO: Don't immediately fail on errors, set the error flag.
     Ok((packages, false))
 }
 
