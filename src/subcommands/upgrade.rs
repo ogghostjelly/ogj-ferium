@@ -12,12 +12,11 @@ use libium::{
         structs::{Mod, ModIdentifier, ModLoader, Profile},
     },
     upgrade::{
-        dep_provider::{self, DependencyProvider, Fabric},
+        dep_provider::{self, Fabric},
         mod_downloadable, DownloadData,
     },
 };
 use parking_lot::Mutex;
-use reqwest::Client;
 use std::{
     fs::read_dir,
     mem::take,
@@ -30,6 +29,7 @@ use tokio::task::JoinSet;
 ///
 /// If an error occurs with a resolving task, instead of failing immediately,
 /// resolution will continue and the error return flag is set to true.
+// NOTE: Leaving this function here for future reference, you can delete it if you want!
 pub async fn get_platform_downloadables_(profile: &Profile) -> Result<(Vec<DownloadData>, bool)> {
     let progress_bar = Arc::new(Mutex::new(ProgressBar::new(0).with_style(STYLE_NO.clone())));
     let mut tasks = JoinSet::new();
@@ -156,14 +156,40 @@ pub async fn get_platform_downloadables_(profile: &Profile) -> Result<(Vec<Downl
 }
 
 async fn get_platform_downloadables(profile: &Profile) -> Result<(Vec<DownloadData>, bool)> {
-    println!("{}\n", "Determining the Latest Compatible Versions".bold());
+    let progress_bar = Arc::new(Mutex::new(ProgressBar::new(0).with_style(STYLE_NO.clone())));
 
-    Ok((
-        dep_provider::solve::<Fabric>(profile.clone())
-            .await
-            .unwrap(),
-        false,
-    ))
+    println!("{}\n", "Determining the Latest Compatible Versions".bold());
+    progress_bar
+        .lock()
+        .enable_steady_tick(Duration::from_millis(100));
+    let pad_len = profile
+        .mods
+        .iter()
+        .map(|m| m.name.len())
+        .max()
+        .unwrap_or(20)
+        .clamp(20, 50);
+
+    let result = dep_provider::solve::<Fabric>(
+        profile.clone(),
+        |name| {
+            progress_bar.lock().inc(1);
+            progress_bar
+                .lock()
+                .println(format!("{} {:pad_len$}", TICK.clone(), name));
+        },
+        || {
+            progress_bar.lock().inc_length(1);
+        },
+    )
+    .await;
+
+    let packages = match result {
+        Ok(data) => data,
+        Err(e) => bail!("{e}"),
+    };
+
+    Ok((packages, false))
 }
 
 pub async fn upgrade(profile: &Profile) -> Result<()> {

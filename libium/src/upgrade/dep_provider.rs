@@ -3,7 +3,7 @@ mod structs;
 use futures_util::{future::try_join_all, FutureExt};
 use pubgrub::{PubGrubError, VersionSet};
 use reqwest::Client;
-use std::{any::Any, cell::RefCell, cmp, fmt, rc::Rc, sync::mpsc, thread};
+use std::{any::Any, cell::RefCell, cmp, collections::HashMap, fmt, rc::Rc, sync::mpsc, thread};
 use structs::Package;
 
 use crate::{
@@ -54,10 +54,28 @@ impl<R: Resolver> DependencyProvider<R> {
     }
 }
 
-pub async fn solve<R: Resolver>(profile: Profile) -> Result<Vec<DownloadData>, Error<R>> {
+pub async fn solve<R: Resolver>(
+    profile: Profile,
+    download_callback: impl FnMut(String),
+    request_callback: impl FnMut(),
+) -> Result<Vec<DownloadData>, Error<R>> {
+    let id_to_name = profile
+        .mods
+        .iter()
+        .map(|mod_| (mod_.identifier.clone(), mod_.name.clone()))
+        .collect();
+
     let (data_channel, res_channel) = two_way::channel();
     let handle = start_resolver_thread::<R>(&profile, res_channel);
-    process_data_requests(handle, profile.filters, data_channel).await
+    process_data_requests(
+        handle,
+        profile.filters,
+        data_channel,
+        id_to_name,
+        download_callback,
+        request_callback,
+    )
+    .await
 }
 
 fn start_resolver_thread<R: Resolver>(
@@ -97,6 +115,9 @@ async fn process_data_requests<R: Resolver>(
     resolver_thread: thread::JoinHandle<Result<Vec<DownloadData>, Error<R>>>,
     filters: Vec<Filter>,
     ch: TwoWayChannel<DataPacket<R>, ModIdentifier>,
+    id_to_name: HashMap<ModIdentifier, String>,
+    mut download_callback: impl FnMut(String),
+    mut request_callback: impl FnMut(),
 ) -> Result<Vec<DownloadData>, Error<R>> {
     let client = Client::new();
     let mut futs = vec![];
@@ -106,18 +127,28 @@ async fn process_data_requests<R: Resolver>(
             break;
         }
 
+        // TODO: acquire thread SEMAPHORE before spawning task,
+        //       to prevent too many threads.
+
         while let Ok(id) = ch.rx.try_recv() {
             let fut = fetch_data::<R>(client.clone(), id.clone(), filters.clone());
             let fut = fut.map(|data| data.map(|d| (id, d)));
             futs.push(tokio::task::spawn(fut));
+            request_callback();
         }
 
         let mut new_futs = vec![];
 
         for fut in futs {
             if fut.is_finished() {
-                let data = fut.await.map_err(ErrorIn::JoinThread)??;
-                ch.tx.send(data).map_err(Error::ThreadSend)?;
+                let (id, data) = fut.await.map_err(ErrorIn::JoinThread)??;
+
+                download_callback(match id_to_name.get(&id) {
+                    Some(name) => name.clone(),
+                    None => id.to_string(),
+                });
+
+                ch.tx.send((id, data)).map_err(Error::ThreadSend)?;
             } else {
                 new_futs.push(fut);
             }
