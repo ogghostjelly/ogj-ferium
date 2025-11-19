@@ -31,13 +31,16 @@ mod two_way;
 //       I have no idea why but it needs to be fixed! [see related issue](https://github.com/pubgrub-rs/pubgrub/issues/222)
 //       most likely related to how `structs::VersionRange` is implemented.
 
+/// Implementation of [`pubgrub::DependencyProvider`] for Minecraft mods.
 pub struct DependencyProvider<R: Resolver> {
     dependencies: DataDependencies<R>,
     cache: RefCell<Cache<R>>,
 }
 
+/// The dependencies of a mod used by pubgrub for version resolution.
 type DataDependencies<R> =
     pubgrub::DependencyConstraints<Package, VersionRange<<R as Resolver>::Range>>;
+/// A piece of data sent from the request process thread.
 type DataPacket<R> = (ModIdentifier, Vec<ResolutionData<R>>);
 
 impl<R: Resolver> DependencyProvider<R> {
@@ -54,11 +57,22 @@ impl<R: Resolver> DependencyProvider<R> {
     }
 }
 
+/// Find the files to download for a specific profile.
 pub async fn solve<R: Resolver>(
     profile: Profile,
     download_callback: impl FnMut(String),
     request_callback: impl FnMut(),
 ) -> Result<Vec<DownloadData>, Error<R>> {
+    // The pubgrub version resolution library is blocking!
+    // but we want to be able to call async functions!
+    //
+    // the solution? We create another thread that runs our blocking code,
+    // and use message passing to pass data back and forth between the async and blocking thread.
+    //
+    // the data is passed using a `two_way::channel` which is literally just two `mpsc::channel`s
+    // the blocking thread requests data by sending a `ModIdentifier` through the channel.
+    // then the async thread will receive the id and then send a `Vec<ResolutionData>` back to the blocking thread.
+
     let id_to_name = profile
         .mods
         .iter()
@@ -78,6 +92,7 @@ pub async fn solve<R: Resolver>(
     .await
 }
 
+/// Start the thread that runs the pubgrub resolver and return a thread handle to it.
 fn start_resolver_thread<R: Resolver>(
     profile: &Profile,
     channel: TwoWayChannel<ModIdentifier, DataPacket<R>>,
@@ -111,6 +126,10 @@ fn start_resolver_thread<R: Resolver>(
     })
 }
 
+/// The resolver thread will make requests and this function will process those requests
+/// and send the response data back through the two way channel.
+///
+/// This function is blocking and finishes when the resolver thread finishes.
 async fn process_data_requests<R: Resolver>(
     resolver_thread: thread::JoinHandle<Result<Vec<DownloadData>, Error<R>>>,
     filters: Vec<Filter>,
@@ -249,6 +268,7 @@ impl<R: Resolver> pubgrub::DependencyProvider for DependencyProvider<R> {
     }
 }
 
+/// Get the data associated with a specific version of a package.
 fn get_package_version<'c, R: Resolver>(
     data: &'c Rc<Vec<ResolutionData<R>>>,
     version: &Version<<R::Range as RangeLike>::Version>,
@@ -261,6 +281,8 @@ fn get_package_version<'c, R: Resolver>(
     }))
 }
 
+// Compare resolution data and find the one that has higher priority.
+// Higher priority packages are more likely to get picked as the answer.
 fn compare_data<R: Resolver>(
     a: &ResolutionData<R>,
     b: &ResolutionData<R>,
@@ -299,6 +321,7 @@ impl<R: Resolver> DependencyProvider<R> {
     }
 }
 
+/// Fetch the resolution data of a mod.
 pub async fn fetch_data<R: Resolver>(
     client: Client,
     id: ModIdentifier,
