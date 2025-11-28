@@ -1073,3 +1073,28 @@ pub enum ReleaseChannel {
     Beta,
     Alpha,
 }
+
+/// The 'fabric.mod.json' file in a fabric mod.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FabricMetadata {
+    pub schema_version: u64,
+    pub id: String,
+    pub version: String,
+}
+
+/// The `META-INF/mods.toml` file in a forge mod.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeMetadata {
+    pub mod_loader: String,
+    pub loader_version: String,
+    pub license: String,
+    pub mods: Vec<ForgeMetadataMod>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeMetadataMod {
+    pub mod_id: String,
+}

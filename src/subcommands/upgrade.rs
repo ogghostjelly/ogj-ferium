@@ -12,8 +12,8 @@ use libium::{
         options::{Options, OptionsOverrides},
         read_profile,
         structs::{
-            Filters, ModLoader, Profile, ProfileItemConfig, Source, SourceId, SourceKind,
-            SourceKindWithModpack, Version,
+            FabricMetadata, Filters, ForgeMetadata, ModLoader, Profile, ProfileItemConfig, Source,
+            SourceId, SourceKind, SourceKindWithModpack, Version,
         },
     },
     get_tmp_dir,
@@ -25,6 +25,7 @@ use libium::{
 };
 use parking_lot::Mutex;
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::BufReader,
     mem::take,
@@ -73,6 +74,7 @@ pub async fn upgrade(
     } else {
         println!("{}", "\nDownloading Source Files\n".bold());
         download(profile_item.minecraft_dir.clone(), to_download).await?;
+        remove_duplicate_jars(&profile_item.minecraft_dir)?;
     }
 
     apply_options_overrides(&profile_item.minecraft_dir, options)?;
@@ -84,6 +86,88 @@ pub async fn upgrade(
     } else {
         Ok(())
     }
+}
+
+pub fn remove_duplicate_jars(minecraft_dir: &Path) -> Result<()> {
+    let mods_dir = minecraft_dir.join("mods");
+    let mut ids: HashMap<String, Vec<PathBuf>> = HashMap::new();
+
+    for entry in mods_dir.read_dir()? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+
+        let path = entry.path();
+
+        let Some(found_ids) = read_jar_id(&path)? else {
+            continue;
+        };
+
+        for id in found_ids {
+            ids.entry(id).or_default().push(path.clone())
+        }
+    }
+
+    for (id, paths) in ids {
+        if paths.len() < 2 {
+            continue;
+        }
+
+        let message = format!("Multiple JARs with the id '{id}' were found, choose one to keep.");
+        let options = paths.iter().map(|p| p.display().to_string()).collect();
+        let index = inquire::Select::new(&message, options).raw_prompt()?.index;
+
+        for i in 0..paths.len() {
+            if i == index {
+                continue;
+            }
+
+            fs::remove_file(&paths[i])?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn read_jar_id(path: &Path) -> Result<Option<Vec<String>>> {
+    if let Some(contents) =
+        read_file_from_zip(BufReader::new(File::open(path)?), "META-INF/mods.toml")?
+    {
+        let metadata: ForgeMetadata = match toml::from_str(&contents) {
+            Ok(value) => value,
+            Err(e) => {
+                warn!(
+                    "err in {} while reading 'META-INF/mods.toml': {e}",
+                    path.display()
+                );
+                return Ok(None);
+            }
+        };
+
+        return Ok(Some(
+            metadata.mods.into_iter().map(|mod_| mod_.mod_id).collect(),
+        ));
+    }
+
+    if let Some(contents) =
+        read_file_from_zip(BufReader::new(File::open(path)?), "fabric.mod.json")?
+    {
+        let metadata: FabricMetadata = match serde_json::from_str(&contents) {
+            Ok(value) => value,
+            Err(e) => {
+                warn!(
+                    "err in {} while reading 'fabric.mod.json': {e}",
+                    path.display()
+                );
+                return Ok(None);
+            }
+        };
+
+        return Ok(Some(vec![metadata.id]));
+    }
+
+    Ok(None)
 }
 
 /// Apply option overrides.

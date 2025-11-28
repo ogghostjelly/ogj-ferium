@@ -472,11 +472,15 @@ impl DownloadData {
             }
             DownloadSource::Path(path) => {
                 if path.is_dir() {
-                    fs_extra::dir::copy(
-                        path,
-                        out_file_path,
-                        &fs_extra::dir::CopyOptions::new().overwrite(true),
-                    )?;
+                    if let Some(out_file_path) = out_file_path.parent() {
+                        fs::create_dir_all(&out_file_path)?;
+
+                        fs_extra::dir::copy(
+                            path,
+                            out_file_path,
+                            &fs_extra::dir::CopyOptions::new().overwrite(true),
+                        )?;
+                    }
 
                     Ok((size, filename))
                 } else {
