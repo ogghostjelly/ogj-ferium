@@ -311,7 +311,7 @@ pub async fn add(
 
         let name = to_name(
             &project.title,
-            SourceKindWithModpack::from_mr_project_type(project.project_type.clone()),
+            SourceKindWithModpack::from_mr_project_type(project.project_type),
         );
 
         match modrinth(&project, profile, perform_checks, filters.clone()).await {
@@ -412,8 +412,8 @@ pub async fn modrinth(
     let source = Source::modrinth(project.id.clone(), filters);
 
     // Add it to the profile
-    let kind = SourceKindWithModpack::from_mr_project_type(project.project_type.clone())
-        .ok_or(Error::UnsupportedProjectType(project.project_type.clone()))?
+    let kind = SourceKindWithModpack::from_mr_project_type(project.project_type)
+        .ok_or(Error::UnsupportedProjectType(project.project_type))?
         .into();
 
     profile.push(kind, id, source)

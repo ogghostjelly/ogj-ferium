@@ -87,9 +87,7 @@ impl SourceId {
                     .version_list(id)
                     .await?
                     .into_iter()
-                    .map(|version| {
-                        from_mr_version(kind, version, Some(project.project_type.clone()))
-                    })
+                    .map(|version| from_mr_version(kind, version, Some(project.project_type)))
                     .collect_vec()
             }
             SourceId::Github(owner, repo) => GITHUB_API

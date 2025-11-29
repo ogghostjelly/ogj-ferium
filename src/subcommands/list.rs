@@ -12,8 +12,8 @@ use octocrab::models::{repos::Release, Repository};
 use tokio::task::JoinSet;
 
 enum Metadata {
-    CF(Mod),
-    MD(Project, Vec<TeamMember>),
+    CF(Box<Mod>),
+    MD(Box<Project>, Vec<TeamMember>),
     GH(Box<Repository>, Vec<Release>),
 }
 impl Metadata {
@@ -74,10 +74,10 @@ pub async fn verbose(profile: &mut Profile, markdown: bool) -> Result<()> {
 
     let mut metadata = Vec::new();
     for (project, members) in mr_projects.into_iter().zip(mr_teams_members) {
-        metadata.push(Metadata::MD(project, members));
+        metadata.push(Metadata::MD(Box::new(project), members));
     }
     for project in cf_projects {
-        metadata.push(Metadata::CF(project));
+        metadata.push(Metadata::CF(Box::new(project)));
     }
     for res in tasks.join_all().await {
         let (repo, releases) = res?;
@@ -156,14 +156,14 @@ pub fn curseforge(project: &Mod) {
             .iter()
             .map(|author| &author.name)
             .display(", ")
-            .to_string()
+            .clone()
             .cyan(),
         project
             .categories
             .iter()
             .map(|category| &category.name)
             .display(", ")
-            .to_string()
+            .clone()
             .magenta(),
     );
 }
@@ -186,7 +186,7 @@ pub fn modrinth(project: &Project, team_members: &[TeamMember]) {
         format!("https://modrinth.com/mod/{}", project.slug)
             .blue()
             .underline(),
-        match SourceKindWithModpack::from_mr_project_type(project.project_type.clone()) {
+        match SourceKindWithModpack::from_mr_project_type(project.project_type) {
             Some(kind) => format!(
                 "Modrinth {}",
                 match kind {
@@ -209,14 +209,9 @@ pub fn modrinth(project: &Project, team_members: &[TeamMember]) {
             .iter()
             .map(|member| &member.user.username)
             .display(", ")
-            .to_string()
+            .clone()
             .cyan(),
-        project
-            .categories
-            .iter()
-            .display(", ")
-            .to_string()
-            .magenta(),
+        project.categories.iter().display(", ").clone().magenta(),
         {
             if project.license.name.is_empty() {
                 "Custom"
@@ -272,7 +267,7 @@ pub fn github(repo: &Repository, releases: &[Release]) {
         repo.topics.as_ref().map_or("".into(), |topics| topics
             .iter()
             .display(", ")
-            .to_string()
+            .clone()
             .magenta()),
         repo.license
             .as_ref()

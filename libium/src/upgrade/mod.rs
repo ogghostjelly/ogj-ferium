@@ -473,7 +473,7 @@ impl DownloadData {
             DownloadSource::Path(path) => {
                 if path.is_dir() {
                     if let Some(out_file_path) = out_file_path.parent() {
-                        fs::create_dir_all(&out_file_path)?;
+                        fs::create_dir_all(out_file_path)?;
 
                         fs_extra::dir::copy(
                             path,

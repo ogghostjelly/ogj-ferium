@@ -105,7 +105,7 @@ pub fn remove_duplicate_jars(minecraft_dir: &Path) -> Result<()> {
         };
 
         for id in found_ids {
-            ids.entry(id).or_default().push(path.clone())
+            ids.entry(id).or_default().push(path.clone());
         }
     }
 
@@ -118,12 +118,12 @@ pub fn remove_duplicate_jars(minecraft_dir: &Path) -> Result<()> {
         let options = paths.iter().map(|p| p.display().to_string()).collect();
         let index = inquire::Select::new(&message, options).raw_prompt()?.index;
 
-        for i in 0..paths.len() {
+        for (i, path) in paths.iter().enumerate() {
             if i == index {
                 continue;
             }
 
-            fs::remove_file(&paths[i])?;
+            fs::remove_file(path)?;
         }
     }
 
@@ -240,7 +240,7 @@ async fn get_platform_downloadables(
                 }
 
                 to_download.push(DownloadData {
-                    src: DownloadSource::Contents(value.to_string()),
+                    src: DownloadSource::Contents(value.clone()),
                     output: path.clone(),
                     length: value.len() as u64,
                     dependencies: vec![],
