@@ -5,8 +5,8 @@ use crate::{
     config::{
         modpack::modrinth,
         structs::{
-            ModLoader, ProfileImport, ProfilePath, ReleaseChannel, SourceId, SourceKind,
-            SourceKindWithModpack, SrcPath,
+            join_url, ModLoader, ProfileImport, ProfilePath, ReleaseChannel, SourceId, SourceKind,
+            SourceKindWithModpack, SrcPath, UrlJoinError,
         },
     },
     get_tmp_dir,
@@ -30,7 +30,7 @@ use std::{
     ffi::OsStr,
     fs::{self, create_dir_all, rename, File, OpenOptions},
     io::{self, BufWriter, SeekFrom, Write},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     str::FromStr,
 };
 
@@ -39,15 +39,10 @@ use std::{
 pub enum Error {
     ReqwestError(#[from] reqwest::Error),
     IOError(#[from] std::io::Error),
+    UrlJoin(#[from] UrlJoinError),
     FsExtraError(#[from] fs_extra::error::Error),
     #[error("expected file hash {0} but got {1}")]
     UnexpectedFileHash(String, String),
-    #[error("malformed url: cannot be base: '{0}'")]
-    UrlCannotBeBase(Url),
-    #[error("path is not valid utf-8: '{0}'")]
-    InvalidUtf8Path(PathBuf),
-    #[error("paths in url imported profiles cannot contain prefix components: '{0}'")]
-    PathWithPrefix(PathBuf),
 }
 type Result<T> = std::result::Result<T, Error>;
 
@@ -596,33 +591,11 @@ impl ProfilePath {
     pub async fn download(&self, src_path: SrcPath) -> Result<(SrcPath, PathBuf)> {
         match self {
             ProfilePath::Path(path) => match src_path {
-                SrcPath::Url(url) => Self::download_url(Self::join_url(url, path)?).await,
+                SrcPath::Url(url) => Self::download_url(join_url(url, path)?).await,
                 SrcPath::Path(src_path) => Self::download_path(src_path, path).await,
             },
             ProfilePath::Url(url) => Self::download_url(url.clone()).await,
         }
-    }
-
-    fn join_url(mut url: Url, path: &PathBuf) -> Result<Url> {
-        let Ok(mut segs) = url.path_segments_mut() else {
-            return Err(Error::UrlCannotBeBase(url));
-        };
-
-        for c in path.components() {
-            match c {
-                Component::RootDir => segs.clear(),
-                Component::CurDir => &mut segs,
-                Component::ParentDir => segs.pop(),
-                Component::Normal(s) => match s.to_str() {
-                    Some(s) => segs.push(s),
-                    None => return Err(Error::InvalidUtf8Path(path.clone())),
-                },
-                Component::Prefix(_) => return Err(Error::PathWithPrefix(path.clone())),
-            };
-        }
-
-        drop(segs);
-        Ok(url)
     }
 
     async fn download_path(src_path: PathBuf, path: &PathBuf) -> Result<(SrcPath, PathBuf)> {

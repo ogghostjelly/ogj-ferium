@@ -144,7 +144,7 @@ async fn get_platform_downloadables(
         }
 
         if let Some(overrides) = profile.overrides_path() {
-            read_overrides(to_download, &src_path.join(overrides))?;
+            read_overrides(to_download, src_path.join(overrides)?)?;
         }
 
         if let Some(files) = profile.overrides_files() {
