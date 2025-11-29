@@ -113,6 +113,8 @@ jobs:
           echo PKG_CONFIG_LIBDIR=$PKG_CONFIG_LIBDIR
           echo PKG_CONFIG_SYSROOT_DIR=$PKG_CONFIG_SYSROOT_DIR
 
+          ls /usr/
+
       - name: Build Linux
         if: matrix.os == 'ubuntu-latest'
         run: |
