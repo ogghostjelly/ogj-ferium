@@ -5,8 +5,8 @@ use crate::{
     config::{
         modpack::modrinth,
         structs::{
-            ModLoader, ProfileImport, ProfileImportSource, ReleaseChannel, SourceId, SourceKind,
-            SourceKindWithModpack,
+            join_url, ModLoader, ProfileImport, ProfilePath, ReleaseChannel, SourceId, SourceKind,
+            SourceKindWithModpack, SrcPath, UrlJoinError,
         },
     },
     get_tmp_dir,
@@ -39,6 +39,7 @@ use std::{
 pub enum Error {
     ReqwestError(#[from] reqwest::Error),
     IOError(#[from] std::io::Error),
+    UrlJoin(#[from] UrlJoinError),
     FsExtraError(#[from] fs_extra::error::Error),
     #[error("expected file hash {0} but got {1}")]
     UnexpectedFileHash(String, String),
@@ -341,12 +342,15 @@ pub fn from_gh_asset(kind: SourceKind, asset: GHAsset) -> DownloadData {
     }
 }
 
-pub fn from_file(
+pub async fn from_file(
     kind: SourceKind,
-    src_path: &Path,
+    src_path: &SrcPath,
     path: &Path,
 ) -> Result<(Metadata, DownloadData)> {
-    let path = src_path.join(path);
+    let path = match src_path.join(path)? {
+        SrcPath::Url(url) => return from_url(kind, &url).await,
+        SrcPath::Path(path) => path,
+    };
 
     let length = File::open(&path)?.metadata()?.len();
     let filename = path.file_name().unwrap_or(OsStr::new("")).to_os_string();
@@ -573,7 +577,7 @@ pub fn calculate_sha512(path: &Path) -> std::result::Result<String, io::Error> {
 }
 
 impl ProfileImport {
-    pub async fn download(&self, src_path: &Path) -> Result<PathBuf> {
+    pub async fn download(&self, src_path: &SrcPath) -> Result<(SrcPath, PathBuf)> {
         match self {
             ProfileImport::Short(src) | ProfileImport::Long { src, hash: None } => {
                 src.download(src_path).await
@@ -582,34 +586,44 @@ impl ProfileImport {
                 src,
                 hash: Some(hash),
             } => {
-                let path = src.download(src_path).await?;
-                let file_hash = calculate_sha512(&path)?;
+                let (src_path, filepath) = src.download(src_path).await?;
+                let file_hash = calculate_sha512(&filepath)?;
                 if !file_hash.starts_with(&hash.to_ascii_lowercase()) {
                     return Err(Error::UnexpectedFileHash(hash.clone(), file_hash));
                 }
-                Ok(path)
+                Ok((src_path, filepath))
             }
         }
     }
 }
 
-impl ProfileImportSource {
-    pub async fn download(&self, src_path: &Path) -> Result<PathBuf> {
+impl ProfilePath {
+    pub async fn download(&self, src_path: &SrcPath) -> Result<(SrcPath, PathBuf)> {
         match self {
-            ProfileImportSource::Path(path) => Ok(src_path.join(path)),
-            ProfileImportSource::Url(url) => {
-                let path = url.path();
-                let (_, filename) = path.rsplit_once('/').unwrap_or(("", path));
-                let temp_file_path = get_tmp_dir()?.join(filename);
-
-                let mut temp_file = File::create(&temp_file_path)?;
-                let mut response = reqwest::get(url.clone()).await?;
-                while let Some(chunk) = response.chunk().await? {
-                    temp_file.write_all(&chunk)?;
-                }
-
-                Ok(temp_file_path)
-            }
+            ProfilePath::Path(path) => match src_path {
+                SrcPath::Url(url) => Self::download_url(join_url(url.clone(), path)?).await,
+                SrcPath::Path(src_path) => Self::download_path(src_path.clone(), path).await,
+            },
+            ProfilePath::Url(url) => Self::download_url(url.clone()).await,
         }
+    }
+
+    async fn download_path(src_path: PathBuf, path: &PathBuf) -> Result<(SrcPath, PathBuf)> {
+        let filepath = src_path.join(path);
+        Ok((SrcPath::Path(src_path), filepath))
+    }
+
+    async fn download_url(url: Url) -> Result<(SrcPath, PathBuf)> {
+        let path = url.path();
+        let (_, filename) = path.rsplit_once('/').unwrap_or(("", path));
+        let temp_file_path = get_tmp_dir()?.join(filename);
+
+        let mut temp_file = File::create(&temp_file_path)?;
+        let mut response = reqwest::get(url.clone()).await?;
+        while let Some(chunk) = response.chunk().await? {
+            temp_file.write_all(&chunk)?;
+        }
+
+        Ok((SrcPath::Url(url), temp_file_path))
     }
 }

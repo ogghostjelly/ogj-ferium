@@ -5,12 +5,12 @@ use super::{
     DistributionDeniedError, DownloadData,
 };
 use crate::{
-    config::structs::{Filters, Source, SourceId, SourceKind},
+    config::structs::{Filters, Source, SourceId, SourceKind, SrcPath},
     iter_ext::IterExt as _,
     upgrade::from_gh_asset,
     CURSEFORGE_API, GITHUB_API, MODRINTH_API,
 };
-use std::{cmp::Reverse, path::Path};
+use std::cmp::Reverse;
 
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
@@ -37,7 +37,7 @@ type Result<T> = std::result::Result<T, Error>;
 impl Source {
     pub async fn fetch_download_file(
         &self,
-        src_path: Option<&Path>,
+        src_path: Option<&SrcPath>,
         kind: SourceKind,
         filters: Vec<&Filters>,
     ) -> Result<DownloadData> {
@@ -61,7 +61,7 @@ impl Source {
 impl SourceId {
     pub async fn fetch_download_file(
         &self,
-        src_path: Option<&Path>,
+        src_path: Option<&SrcPath>,
         kind: SourceKind,
         filters: Vec<&Filters>,
     ) -> Result<DownloadData> {
@@ -98,7 +98,7 @@ impl SourceId {
                 .await
                 .map(|r| from_gh_releases(kind, r.items))?,
             SourceId::File(path) => match src_path {
-                Some(src_path) => vec![from_file(kind, src_path, path)?],
+                Some(src_path) => vec![from_file(kind, src_path, path).await?],
                 None => return Err(Error::CantUseFileSource),
             },
             SourceId::Url(url) => vec![from_url(kind, url).await?],

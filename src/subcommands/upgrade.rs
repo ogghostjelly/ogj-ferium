@@ -13,7 +13,7 @@ use libium::{
         read_profile,
         structs::{
             FabricMetadata, Filters, ForgeMetadata, ModLoader, Profile, ProfileItemConfig, Source,
-            SourceId, SourceKind, SourceKindWithModpack, Version,
+            SourceId, SourceKind, SourceKindWithModpack, SrcPath, Version,
         },
     },
     get_tmp_dir,
@@ -37,7 +37,7 @@ use tokio::task::JoinSet;
 
 pub async fn upgrade(
     // The path to the profiles parent or `None` if it is embedded
-    src_path: Option<&Path>,
+    src_path: Option<PathBuf>,
     profile_item: &ProfileItemConfig,
     profile: &Profile,
     filters: Filters,
@@ -46,6 +46,8 @@ pub async fn upgrade(
 
     let mut options = OptionsOverrides::default();
     let mut to_download = vec![];
+
+    let src_path = src_path.map(|path| SrcPath::Path(path));
 
     let error =
         get_platform_downloadables(src_path, &mut options, &mut to_download, profile, filters)
@@ -195,7 +197,7 @@ pub fn apply_options_overrides(minecraft_dir: &Path, options: OptionsOverrides) 
 /// If an error occurs with a resolving task, instead of failing immediately,
 /// resolution will continue and the error return flag is set to true.
 async fn get_platform_downloadables(
-    src_path: Option<&Path>,
+    src_path: Option<SrcPath>,
     options: &mut OptionsOverrides,
     to_download: &mut Vec<DownloadData>,
     profile: &Profile,
@@ -208,19 +210,15 @@ async fn get_platform_downloadables(
 
     options.join(&profile.options);
 
-    if let Some(src_path) = src_path {
+    if let Some(src_path) = &src_path {
         for import in &profile.imports {
-            let profile_path = import.download(src_path).await?;
-            let path = src_path.join(&profile_path);
-            let Some(profile) = read_profile(&path)? else {
-                bail!("The profile at '{}' doesn't exist.", profile_path.display())
+            let (src_path, filepath) = import.download(src_path).await?;
+            let Some(profile) = read_profile(&filepath)? else {
+                bail!("The profile at '{}' doesn't exist.", filepath.display())
             };
 
             error |= Box::pin(get_platform_downloadables(
-                Some(
-                    path.parent()
-                        .context("Profile path should have a parent directory")?,
-                ),
+                Some(src_path),
                 options,
                 to_download,
                 &profile,
@@ -230,7 +228,13 @@ async fn get_platform_downloadables(
         }
 
         if let Some(overrides) = profile.overrides_path() {
-            read_overrides(to_download, &src_path.join(overrides))?;
+            let directory = match src_path.join(overrides)? {
+                SrcPath::Url(url) => {
+                    bail!("overrides do not work when importing an external profile: pwd:{url}")
+                }
+                SrcPath::Path(path) => path,
+            };
+            read_overrides(to_download, &directory)?;
         }
 
         if let Some(files) = profile.overrides_files() {
@@ -262,7 +266,8 @@ async fn get_platform_downloadables(
             continue;
         }
 
-        error |= get_source_downloadables(src_path, *kind, to_download, profile, &filters).await?;
+        error |= get_source_downloadables(src_path.as_ref(), *kind, to_download, profile, &filters)
+            .await?;
     }
 
     Ok(error)
@@ -319,7 +324,7 @@ fn sanitize_path(path: &Path) -> bool {
 }
 
 async fn get_source_downloadables(
-    src_path: Option<&Path>,
+    src_path: Option<&SrcPath>,
     kind: SourceKind,
     to_download: &mut Vec<DownloadData>,
     profile: &Profile,
@@ -373,13 +378,13 @@ async fn get_source_downloadables(
             let dep_sender = Arc::clone(&mod_sender);
             let progress_bar = Arc::clone(&progress_bar);
             let client = client.clone();
-            let src_path = src_path.map(ToOwned::to_owned);
+            let src_path = src_path.cloned();
 
             tasks.spawn(async move {
                 let permit = SEMAPHORE.get_or_init(default_semaphore).acquire().await?;
 
                 let result = source
-                    .fetch_download_file(src_path.as_deref(), kind, vec![&filters])
+                    .fetch_download_file(src_path.as_ref(), kind, vec![&filters])
                     .await;
 
                 drop(permit);
@@ -549,7 +554,8 @@ async fn download_modpack_inner(
             if install_overrides {
                 let tmp_dir = get_tmp_dir()?.join(manifest.name);
                 zip_extract(path, &tmp_dir)?;
-                read_overrides(to_download, &tmp_dir.join(manifest.overrides))?;
+                let directory = tmp_dir.join(manifest.overrides);
+                read_overrides(to_download, &directory)?;
             }
         }
         SourceKindWithModpack::ModpacksModrinth => {

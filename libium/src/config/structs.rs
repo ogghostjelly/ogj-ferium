@@ -12,9 +12,10 @@ use std::{
     io,
     marker::PhantomData,
     ops::{Deref, DerefMut},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
 };
+use thiserror::Error;
 use url::Url;
 use zip::{result::ZipError, ZipArchive};
 
@@ -195,18 +196,70 @@ pub struct Profile {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum ProfileImport {
-    Short(ProfileImportSource),
+    Short(ProfilePath),
     Long {
-        src: ProfileImportSource,
+        src: ProfilePath,
         hash: Option<String>,
     },
 }
 
+/// The source of a profile import, e.g './path/to/profile.toml' or 'https://example.com/profile.toml'
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
-pub enum ProfileImportSource {
+pub enum ProfilePath {
     Url(Url),
     Path(PathBuf),
+}
+
+/// The parent of a profile path, e.g './path/to' or 'https://example.com'.
+/// Used as the current working directory of a profile.
+#[derive(Clone)]
+pub enum SrcPath {
+    Url(Url),
+    Path(PathBuf),
+}
+
+impl SrcPath {
+    pub fn join(&self, path: &Path) -> Result<Self, UrlJoinError> {
+        Ok(match self {
+            SrcPath::Url(url) => Self::Url(join_url(url.clone(), path)?),
+            SrcPath::Path(path_buf) => Self::Path(path_buf.join(path)),
+        })
+    }
+}
+
+pub fn join_url(mut url: Url, path: &Path) -> Result<Url, UrlJoinError> {
+    let Ok(mut segs) = url.path_segments_mut() else {
+        return Err(UrlJoinError::UrlCannotBeBase(url));
+    };
+
+    segs.pop();
+
+    for c in path.components() {
+        match c {
+            Component::RootDir => segs.clear(),
+            Component::CurDir => &mut segs,
+            Component::ParentDir => segs.pop(),
+            Component::Normal(s) => match s.to_str() {
+                Some(s) => segs.push(s),
+                None => return Err(UrlJoinError::InvalidUtf8Path(path.to_path_buf())),
+            },
+            Component::Prefix(_) => return Err(UrlJoinError::PathWithPrefix(path.to_path_buf())),
+        };
+    }
+
+    drop(segs);
+    Ok(url)
+}
+
+#[derive(Error, Debug)]
+pub enum UrlJoinError {
+    #[error("malformed url: cannot be base: '{0}'")]
+    UrlCannotBeBase(Url),
+    #[error("path is not valid utf-8: '{0}'")]
+    InvalidUtf8Path(PathBuf),
+    #[error("paths in url imported profiles cannot contain prefix components: '{0}'")]
+    PathWithPrefix(PathBuf),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
