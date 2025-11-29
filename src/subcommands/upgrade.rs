@@ -47,7 +47,7 @@ pub async fn upgrade(
     let mut options = OptionsOverrides::default();
     let mut to_download = vec![];
 
-    let src_path = src_path.map(|path| SrcPath::Path(path));
+    let src_path = src_path.map(SrcPath::Path);
 
     let error =
         get_platform_downloadables(src_path, &mut options, &mut to_download, profile, filters)
