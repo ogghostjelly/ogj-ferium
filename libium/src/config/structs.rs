@@ -680,7 +680,7 @@ impl SourceKindWithModpack {
         self.into()
     }
 
-    pub fn from_cf_class_id(class_id: usize) -> Option<Self> {
+    pub fn from_cf_class_id(class_id: i32) -> Option<Self> {
         match class_id {
             12 => Some(Self::Resourcepacks),
             6 => Some(Self::Mods),

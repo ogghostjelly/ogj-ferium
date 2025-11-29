@@ -452,7 +452,9 @@ async fn actual_main(mut cli_app: Ferium) -> Result<()> {
 }
 
 /// Get the active profile with error handling
-fn get_active_profile(config: &mut Config) -> Result<(&mut ProfileItemConfig, ProfileSourceMut)> {
+fn get_active_profile<'a>(
+    config: &'a mut Config,
+) -> Result<(&'a mut ProfileItemConfig, ProfileSourceMut<'a>)> {
     let index = get_active_profile_index(config)?;
     let ProfileItem { profile, config } = &mut config.profiles[index];
 

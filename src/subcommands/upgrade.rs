@@ -497,12 +497,19 @@ async fn download_modpack_inner(
                     .context("Does not contain manifest")?,
             )?;
 
-            let file_ids = manifest.files.iter().map(|file| file.file_id).collect();
-            let files = CURSEFORGE_API.get_files(file_ids).await?;
+            let file_ids: Vec<i32> = manifest.files.iter().map(|file| file.file_id).collect();
+            let files = CURSEFORGE_API.get_files(file_ids.clone()).await?;
 
             let mut tasks = JoinSet::new();
             let mut msg_shown = false;
-            for file in files {
+            for (i, file) in files.into_iter().enumerate() {
+                let Some(file) = file else {
+                    bail!(
+                        "couldn't find the curseforge file for the file id {}",
+                        file_ids[i]
+                    )
+                };
+
                 match try_from_cf_file(SourceKind::Modpacks, file, None) {
                     Ok((_metadata, mut downloadable)) => {
                         downloadable.output = PathBuf::from(

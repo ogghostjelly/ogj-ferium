@@ -27,7 +27,7 @@ pub enum Error {
     #[error("The project does not exist")]
     DoesNotExist,
     #[error("The project class id '{0:?}' is not supported")]
-    UnsupportedClassId(Option<usize>),
+    UnsupportedClassId(Option<i32>),
     #[error("The project type '{0:?}' is not supported")]
     UnsupportedProjectType(ProjectType),
     #[error("The file type '{0}' is not supported or unknown")]
@@ -152,7 +152,7 @@ pub async fn add(
         mr_ids.sort_unstable();
         mr_ids.dedup();
         MODRINTH_API
-            .get_multiple_projects(&mr_ids.iter().map(AsRef::as_ref).collect_vec())
+            .project_get_multiple(&mr_ids.iter().map(AsRef::as_ref).collect_vec())
             .await?
     } else {
         Vec::new()

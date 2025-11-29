@@ -154,7 +154,7 @@ pub struct DistributionDeniedError(pub i32, pub i32);
 pub fn try_from_cf_file(
     kind: SourceKind,
     file: CFFile,
-    class_id: Option<usize>,
+    class_id: Option<i32>,
 ) -> std::result::Result<(Metadata, DownloadData), DistributionDeniedError> {
     let inferred_kind = class_id.and_then(SourceKindWithModpack::from_cf_class_id);
 

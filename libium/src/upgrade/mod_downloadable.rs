@@ -81,10 +81,10 @@ impl SourceId {
                     .collect::<Result<Vec<_>>>()?
             }
             SourceId::Modrinth(id) => {
-                let project = MODRINTH_API.get_project(id).await?;
+                let project = MODRINTH_API.project_get(id).await?;
 
                 MODRINTH_API
-                    .list_versions(id)
+                    .version_list(id)
                     .await?
                     .into_iter()
                     .map(|version| {
@@ -117,7 +117,7 @@ impl SourceId {
             }
             SourceId::PinnedModrinth(id, pin) => {
                 let (mr_version, mr_project) =
-                    join(MODRINTH_API.get_version(pin), MODRINTH_API.get_project(id)).await;
+                    join(MODRINTH_API.version_get(pin), MODRINTH_API.project_get(id)).await;
                 let (mr_version, mr_project) = (mr_version?, mr_project?);
 
                 let mr = from_mr_version(kind, mr_version, Some(mr_project.project_type));
