@@ -94,6 +94,25 @@ jobs:
           cargo build --target=x86_64-pc-windows-msvc --release
           Compress-Archive -Path "target\x86_64-pc-windows-msvc\release\ogj-ferium.exe" -DestinationPath "out\ogj-ferium-windows-msvc.zip"
 
+      - name: Print Debug
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          echo SYSROOT=$SYSROOT
+          echo PKG_CONFIG_PATH=$PKG_CONFIG_PATH
+          echo PKG_CONFIG_LIBDIR=$PKG_CONFIG_LIBDIR
+          echo PKG_CONFIG_SYSROOT_DIR=$PKG_CONFIG_SYSROOT_DIR
+
+          SYSROOT=/build/root
+
+          export PKG_CONFIG_PATH=
+          export PKG_CONFIG_LIBDIR=${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig
+          export PKG_CONFIG_SYSROOT_DIR=${SYSROOT}
+
+          echo SYSROOT=$SYSROOT
+          echo PKG_CONFIG_PATH=$PKG_CONFIG_PATH
+          echo PKG_CONFIG_LIBDIR=$PKG_CONFIG_LIBDIR
+          echo PKG_CONFIG_SYSROOT_DIR=$PKG_CONFIG_SYSROOT_DIR
+
       - name: Build Linux
         if: matrix.os == 'ubuntu-latest'
         run: |
