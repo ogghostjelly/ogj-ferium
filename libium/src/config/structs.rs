@@ -233,6 +233,8 @@ pub fn join_url(mut url: Url, path: &Path) -> Result<Url, UrlJoinError> {
         return Err(UrlJoinError::UrlCannotBeBase(url));
     };
 
+    segs.pop();
+
     for c in path.components() {
         match c {
             Component::RootDir => segs.clear(),
