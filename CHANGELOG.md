@@ -4,6 +4,10 @@
 
 - Prefer OS Specific Paths
 - Fix `.minecraft` directory not absolute when importing using the CLI
+- Support for relative file paths in a profile imported from a url
+- Ask the user to remove duplicate jar file ids
+- Fix filter concatenation bug
+- Fix modpack overrides not installing to the correct directories
 
 ## `ogj-v2.0.3-alpha`
 
