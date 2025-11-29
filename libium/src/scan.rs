@@ -55,7 +55,7 @@ pub async fn scan(
     // Fetch the mods using the file hashes.
     let (mr_results, cf_results) = try_join!(
         MODRINTH_API
-            .get_versions_from_hashes(mr_hashes.clone())
+            .version_get_from_multiple_hashes(mr_hashes.clone())
             .map_err(Error::from),
         CURSEFORGE_API
             .get_fingerprint_matches(cf_hashes.clone())
@@ -83,7 +83,7 @@ pub async fn scan(
                     .to_string_lossy()
                     .into_owned(),
                 mr_results.remove(mr),
-                cf_results.remove(cf),
+                cf_results.remove(&(*cf as i64)),
             )
         })
         .collect())

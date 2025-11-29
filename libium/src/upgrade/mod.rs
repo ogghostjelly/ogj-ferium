@@ -43,6 +43,8 @@ pub enum Error {
     FsExtraError(#[from] fs_extra::error::Error),
     #[error("expected file hash {0} but got {1}")]
     UnexpectedFileHash(String, String),
+    #[error("expected one of the specified user hash {0:?} but got {1}")]
+    UnexpectedUserHash(Vec<String>, String),
 }
 type Result<T> = std::result::Result<T, Error>;
 
@@ -153,7 +155,7 @@ pub struct DistributionDeniedError(pub i32, pub i32);
 pub fn try_from_cf_file(
     kind: SourceKind,
     file: CFFile,
-    class_id: Option<usize>,
+    class_id: Option<i32>,
 ) -> std::result::Result<(Metadata, DownloadData), DistributionDeniedError> {
     let inferred_kind = class_id.and_then(SourceKindWithModpack::from_cf_class_id);
 
@@ -340,12 +342,15 @@ pub fn from_gh_asset(kind: SourceKind, asset: GHAsset) -> DownloadData {
     }
 }
 
-pub fn from_file(
+pub async fn from_file(
     kind: SourceKind,
-    src_path: &Path,
+    src_path: &SrcPath,
     path: &Path,
 ) -> Result<(Metadata, DownloadData)> {
-    let path = src_path.join(path);
+    let path = match src_path.join(path)? {
+        SrcPath::Url(url) => return from_url(kind, &url).await,
+        SrcPath::Path(path) => path,
+    };
 
     let length = File::open(&path)?.metadata()?.len();
     let filename = path.file_name().unwrap_or(OsStr::new("")).to_os_string();
@@ -471,11 +476,15 @@ impl DownloadData {
             }
             DownloadSource::Path(path) => {
                 if path.is_dir() {
-                    fs_extra::dir::copy(
-                        path,
-                        out_file_path,
-                        &fs_extra::dir::CopyOptions::new().overwrite(true),
-                    )?;
+                    if let Some(out_file_path) = out_file_path.parent() {
+                        fs::create_dir_all(out_file_path)?;
+
+                        fs_extra::dir::copy(
+                            path,
+                            out_file_path,
+                            &fs_extra::dir::CopyOptions::new().overwrite(true),
+                        )?;
+                    }
 
                     Ok((size, filename))
                 } else {
@@ -542,10 +551,11 @@ impl TempFile {
 
         if !user_hash.is_empty() {
             let hash = calculate_sha512(&self.tmp_path)?;
-            for expected in user_hash {
-                if !hash.starts_with(&expected.to_ascii_lowercase()) {
-                    return Err(Error::UnexpectedFileHash(expected, hash));
-                }
+            let is_ok = user_hash
+                .iter()
+                .any(|expected| hash.starts_with(&expected.to_ascii_lowercase()));
+            if !is_ok {
+                return Err(Error::UnexpectedUserHash(user_hash, hash));
             }
         }
 
@@ -567,7 +577,7 @@ pub fn calculate_sha512(path: &Path) -> std::result::Result<String, io::Error> {
 }
 
 impl ProfileImport {
-    pub async fn download(&self, src_path: SrcPath) -> Result<(SrcPath, PathBuf)> {
+    pub async fn download(&self, src_path: &SrcPath) -> Result<(SrcPath, PathBuf)> {
         match self {
             ProfileImport::Short(src) | ProfileImport::Long { src, hash: None } => {
                 src.download(src_path).await
@@ -588,11 +598,11 @@ impl ProfileImport {
 }
 
 impl ProfilePath {
-    pub async fn download(&self, src_path: SrcPath) -> Result<(SrcPath, PathBuf)> {
+    pub async fn download(&self, src_path: &SrcPath) -> Result<(SrcPath, PathBuf)> {
         match self {
             ProfilePath::Path(path) => match src_path {
-                SrcPath::Url(url) => Self::download_url(join_url(url, path)?).await,
-                SrcPath::Path(src_path) => Self::download_path(src_path, path).await,
+                SrcPath::Url(url) => Self::download_url(join_url(url.clone(), path)?).await,
+                SrcPath::Path(src_path) => Self::download_path(src_path.clone(), path).await,
             },
             ProfilePath::Url(url) => Self::download_url(url.clone()).await,
         }

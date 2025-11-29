@@ -24,20 +24,18 @@ pub static GITHUB_API: LazyLock<octocrab::Octocrab> = LazyLock::new(|| {
 });
 
 pub static CURSEFORGE_API: LazyLock<furse::Furse> = LazyLock::new(|| {
-    furse::Furse::new(&std::env::var("CURSEFORGE_API_KEY").unwrap_or(String::from(
+    furse::Furse::new(std::env::var("CURSEFORGE_API_KEY").unwrap_or(String::from(
         "$2a$10$sI.yRk4h4R49XYF94IIijOrO4i3W3dAFZ4ssOlNE10GYrDhc2j8K.",
     )))
 });
 
-pub static MODRINTH_API: LazyLock<ferinth::Ferinth> = LazyLock::new(|| {
-    ferinth::Ferinth::new(
+pub static MODRINTH_API: LazyLock<ferinth::Ferinth<()>> = LazyLock::new(|| {
+    ferinth::Ferinth::<()>::new(
         "ferium",
         // TODO: option_env!("CARGO_PKG_VERSION"),
         None,
         Some("Discord: therookiecoder"),
-        None,
     )
-    .expect("Could not build Modrinth client") // This should never fail since no `authorisation` token was provided
 });
 
 pub static BASE_DIRS: LazyLock<BaseDirs> =

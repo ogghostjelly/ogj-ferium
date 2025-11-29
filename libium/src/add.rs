@@ -27,7 +27,7 @@ pub enum Error {
     #[error("The project does not exist")]
     DoesNotExist,
     #[error("The project class id '{0:?}' is not supported")]
-    UnsupportedClassId(Option<usize>),
+    UnsupportedClassId(Option<i32>),
     #[error("The project type '{0:?}' is not supported")]
     UnsupportedProjectType(ProjectType),
     #[error("The file type '{0}' is not supported or unknown")]
@@ -152,7 +152,7 @@ pub async fn add(
         mr_ids.sort_unstable();
         mr_ids.dedup();
         MODRINTH_API
-            .get_multiple_projects(&mr_ids.iter().map(AsRef::as_ref).collect_vec())
+            .project_get_multiple(&mr_ids.iter().map(AsRef::as_ref).collect_vec())
             .await?
     } else {
         Vec::new()
@@ -311,7 +311,7 @@ pub async fn add(
 
         let name = to_name(
             &project.title,
-            SourceKindWithModpack::from_mr_project_type(project.project_type.clone()),
+            SourceKindWithModpack::from_mr_project_type(project.project_type),
         );
 
         match modrinth(&project, profile, perform_checks, filters.clone()).await {
@@ -412,8 +412,8 @@ pub async fn modrinth(
     let source = Source::modrinth(project.id.clone(), filters);
 
     // Add it to the profile
-    let kind = SourceKindWithModpack::from_mr_project_type(project.project_type.clone())
-        .ok_or(Error::UnsupportedProjectType(project.project_type.clone()))?
+    let kind = SourceKindWithModpack::from_mr_project_type(project.project_type)
+        .ok_or(Error::UnsupportedProjectType(project.project_type))?
         .into();
 
     profile.push(kind, id, source)
@@ -450,7 +450,7 @@ pub async fn curseforge(
                         .filter_map(|i| {
                             i.mod_loader
                                 .as_ref()
-                                .and_then(|l| ModLoader::from_str(&format!("{:?}", l)).ok())
+                                .and_then(|l| ModLoader::from_str(&format!("{l:?}")).ok())
                         })
                         .collect_vec(),
                     channel: ReleaseChannel::Release,

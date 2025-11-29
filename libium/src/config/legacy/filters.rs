@@ -84,15 +84,15 @@ impl TryInto<structs::Filters> for Filter {
                 ..Default::default()
             }),
             Filter::Filename(filename) => Ok(structs::Filters {
-                filename: Some(filename.parse()?),
+                filename: Some(vec![filename.parse()?]),
                 ..Default::default()
             }),
             Filter::Title(title) => Ok(structs::Filters {
-                title: Some(title.parse()?),
+                title: Some(vec![title.parse()?]),
                 ..Default::default()
             }),
             Filter::Description(description) => Ok(structs::Filters {
-                description: Some(description.parse()?),
+                description: Some(vec![description.parse()?]),
                 ..Default::default()
             }),
         }

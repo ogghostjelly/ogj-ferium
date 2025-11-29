@@ -193,7 +193,6 @@ impl Options {
         keycode: Keycode,
         mut err_handler: impl FnMut(OverrideError) + Clone,
     ) {
-        println!("keybind: {keybind}");
         if !keybind.starts_with("key_") {
             err_handler(OverrideError::BadKeybindPrefix(keybind.to_string()))
         }

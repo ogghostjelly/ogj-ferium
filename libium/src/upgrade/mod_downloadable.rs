@@ -5,12 +5,12 @@ use super::{
     DistributionDeniedError, DownloadData,
 };
 use crate::{
-    config::structs::{Filters, Source, SourceId, SourceKind},
+    config::structs::{Filters, Source, SourceId, SourceKind, SrcPath},
     iter_ext::IterExt as _,
     upgrade::from_gh_asset,
     CURSEFORGE_API, GITHUB_API, MODRINTH_API,
 };
-use std::{cmp::Reverse, path::Path};
+use std::cmp::Reverse;
 
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
@@ -37,7 +37,7 @@ type Result<T> = std::result::Result<T, Error>;
 impl Source {
     pub async fn fetch_download_file(
         &self,
-        src_path: Option<&Path>,
+        src_path: Option<&SrcPath>,
         kind: SourceKind,
         filters: Vec<&Filters>,
     ) -> Result<DownloadData> {
@@ -61,7 +61,7 @@ impl Source {
 impl SourceId {
     pub async fn fetch_download_file(
         &self,
-        src_path: Option<&Path>,
+        src_path: Option<&SrcPath>,
         kind: SourceKind,
         filters: Vec<&Filters>,
     ) -> Result<DownloadData> {
@@ -81,15 +81,13 @@ impl SourceId {
                     .collect::<Result<Vec<_>>>()?
             }
             SourceId::Modrinth(id) => {
-                let project = MODRINTH_API.get_project(id).await?;
+                let project = MODRINTH_API.project_get(id).await?;
 
                 MODRINTH_API
-                    .list_versions(id)
+                    .version_list(id)
                     .await?
                     .into_iter()
-                    .map(|version| {
-                        from_mr_version(kind, version, Some(project.project_type.clone()))
-                    })
+                    .map(|version| from_mr_version(kind, version, Some(project.project_type)))
                     .collect_vec()
             }
             SourceId::Github(owner, repo) => GITHUB_API
@@ -100,7 +98,7 @@ impl SourceId {
                 .await
                 .map(|r| from_gh_releases(kind, r.items))?,
             SourceId::File(path) => match src_path {
-                Some(src_path) => vec![from_file(kind, src_path, path)?],
+                Some(src_path) => vec![from_file(kind, src_path, path).await?],
                 None => return Err(Error::CantUseFileSource),
             },
             SourceId::Url(url) => vec![from_url(kind, url).await?],
@@ -117,7 +115,7 @@ impl SourceId {
             }
             SourceId::PinnedModrinth(id, pin) => {
                 let (mr_version, mr_project) =
-                    join(MODRINTH_API.get_version(pin), MODRINTH_API.get_project(id)).await;
+                    join(MODRINTH_API.version_get(pin), MODRINTH_API.project_get(id)).await;
                 let (mr_version, mr_project) = (mr_version?, mr_project?);
 
                 let mr = from_mr_version(kind, mr_version, Some(mr_project.project_type));

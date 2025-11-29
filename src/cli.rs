@@ -180,11 +180,11 @@ pub struct FilterArguments {
     pub release_channels: Option<Vec<ReleaseChannel>>,
 
     #[clap(long, short = 'n')]
-    pub filename: Option<Regex>,
+    pub filename: Option<Vec<Regex>>,
     #[clap(long, short = 't')]
-    pub title: Option<Regex>,
+    pub title: Option<Vec<Regex>>,
     #[clap(long, short = 'd')]
-    pub description: Option<Regex>,
+    pub description: Option<Vec<Regex>>,
     #[clap(long, short = 'o')]
     pub install_overrides: Option<bool>,
     #[clap(long, short = 'r')]

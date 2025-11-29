@@ -12,8 +12,8 @@ use libium::{
         options::{Options, OptionsOverrides},
         read_profile,
         structs::{
-            Filters, ModLoader, Profile, ProfileItemConfig, Source, SourceId, SourceKind,
-            SourceKindWithModpack, SrcPath, Version,
+            FabricMetadata, Filters, ForgeMetadata, ModLoader, Profile, ProfileItemConfig, Source,
+            SourceId, SourceKind, SourceKindWithModpack, SrcPath, Version,
         },
     },
     get_tmp_dir,
@@ -25,6 +25,7 @@ use libium::{
 };
 use parking_lot::Mutex;
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::BufReader,
     mem::take,
@@ -75,6 +76,7 @@ pub async fn upgrade(
     } else {
         println!("{}", "\nDownloading Source Files\n".bold());
         download(profile_item.minecraft_dir.clone(), to_download).await?;
+        remove_duplicate_jars(&profile_item.minecraft_dir)?;
     }
 
     apply_options_overrides(&profile_item.minecraft_dir, options)?;
@@ -86,6 +88,88 @@ pub async fn upgrade(
     } else {
         Ok(())
     }
+}
+
+pub fn remove_duplicate_jars(minecraft_dir: &Path) -> Result<()> {
+    let mods_dir = minecraft_dir.join("mods");
+    let mut ids: HashMap<String, Vec<PathBuf>> = HashMap::new();
+
+    for entry in mods_dir.read_dir()? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+
+        let path = entry.path();
+
+        let Some(found_ids) = read_jar_id(&path)? else {
+            continue;
+        };
+
+        for id in found_ids {
+            ids.entry(id).or_default().push(path.clone());
+        }
+    }
+
+    for (id, paths) in ids {
+        if paths.len() < 2 {
+            continue;
+        }
+
+        let message = format!("Multiple JARs with the id '{id}' were found, choose one to keep.");
+        let options = paths.iter().map(|p| p.display().to_string()).collect();
+        let index = inquire::Select::new(&message, options).raw_prompt()?.index;
+
+        for (i, path) in paths.iter().enumerate() {
+            if i == index {
+                continue;
+            }
+
+            fs::remove_file(path)?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn read_jar_id(path: &Path) -> Result<Option<Vec<String>>> {
+    if let Some(contents) =
+        read_file_from_zip(BufReader::new(File::open(path)?), "META-INF/mods.toml")?
+    {
+        let metadata: ForgeMetadata = match toml::from_str(&contents) {
+            Ok(value) => value,
+            Err(e) => {
+                warn!(
+                    "err in {} while reading 'META-INF/mods.toml': {e}",
+                    path.display()
+                );
+                return Ok(None);
+            }
+        };
+
+        return Ok(Some(
+            metadata.mods.into_iter().map(|mod_| mod_.mod_id).collect(),
+        ));
+    }
+
+    if let Some(contents) =
+        read_file_from_zip(BufReader::new(File::open(path)?), "fabric.mod.json")?
+    {
+        let metadata: FabricMetadata = match serde_json::from_str(&contents) {
+            Ok(value) => value,
+            Err(e) => {
+                warn!(
+                    "err in {} while reading 'fabric.mod.json': {e}",
+                    path.display()
+                );
+                return Ok(None);
+            }
+        };
+
+        return Ok(Some(vec![metadata.id]));
+    }
+
+    Ok(None)
 }
 
 /// Apply option overrides.
@@ -126,7 +210,7 @@ async fn get_platform_downloadables(
 
     options.join(&profile.options);
 
-    if let Some(src_path) = src_path {
+    if let Some(src_path) = &src_path {
         for import in &profile.imports {
             let (src_path, filepath) = import.download(src_path).await?;
             let Some(profile) = read_profile(&filepath)? else {
@@ -144,7 +228,13 @@ async fn get_platform_downloadables(
         }
 
         if let Some(overrides) = profile.overrides_path() {
-            read_overrides(to_download, src_path.join(overrides)?)?;
+            let directory = match src_path.join(overrides)? {
+                SrcPath::Url(url) => {
+                    bail!("overrides do not work when importing an external profile: pwd:{url}")
+                }
+                SrcPath::Path(path) => path,
+            };
+            read_overrides(to_download, &directory)?;
         }
 
         if let Some(files) = profile.overrides_files() {
@@ -154,7 +244,7 @@ async fn get_platform_downloadables(
                 }
 
                 to_download.push(DownloadData {
-                    src: DownloadSource::Contents(value.to_string()),
+                    src: DownloadSource::Contents(value.clone()),
                     output: path.clone(),
                     length: value.len() as u64,
                     dependencies: vec![],
@@ -176,7 +266,8 @@ async fn get_platform_downloadables(
             continue;
         }
 
-        error |= get_source_downloadables(src_path, *kind, to_download, profile, &filters).await?;
+        error |= get_source_downloadables(src_path.as_ref(), *kind, to_download, profile, &filters)
+            .await?;
     }
 
     Ok(error)
@@ -233,7 +324,7 @@ fn sanitize_path(path: &Path) -> bool {
 }
 
 async fn get_source_downloadables(
-    src_path: Option<&Path>,
+    src_path: Option<&SrcPath>,
     kind: SourceKind,
     to_download: &mut Vec<DownloadData>,
     profile: &Profile,
@@ -255,8 +346,8 @@ async fn get_source_downloadables(
         .enable_steady_tick(Duration::from_millis(100));
     let sources = profile.map(kind);
     let pad_len = sources
-        .iter()
-        .map(|(name, _)| name.len())
+        .keys()
+        .map(String::len)
         .max()
         .unwrap_or(20)
         .clamp(20, 50);
@@ -287,13 +378,13 @@ async fn get_source_downloadables(
             let dep_sender = Arc::clone(&mod_sender);
             let progress_bar = Arc::clone(&progress_bar);
             let client = client.clone();
-            let src_path = src_path.map(ToOwned::to_owned);
+            let src_path = src_path.cloned();
 
             tasks.spawn(async move {
                 let permit = SEMAPHORE.get_or_init(default_semaphore).acquire().await?;
 
                 let result = source
-                    .fetch_download_file(src_path.as_deref(), kind, vec![&filters])
+                    .fetch_download_file(src_path.as_ref(), kind, vec![&filters])
                     .await;
 
                 drop(permit);
@@ -411,12 +502,19 @@ async fn download_modpack_inner(
                     .context("Does not contain manifest")?,
             )?;
 
-            let file_ids = manifest.files.iter().map(|file| file.file_id).collect();
-            let files = CURSEFORGE_API.get_files(file_ids).await?;
+            let file_ids: Vec<i32> = manifest.files.iter().map(|file| file.file_id).collect();
+            let files = CURSEFORGE_API.get_files(file_ids.clone()).await?;
 
             let mut tasks = JoinSet::new();
             let mut msg_shown = false;
-            for file in files {
+            for (i, file) in files.into_iter().enumerate() {
+                let Some(file) = file else {
+                    bail!(
+                        "couldn't find the curseforge file for the file id {}",
+                        file_ids[i]
+                    )
+                };
+
                 match try_from_cf_file(SourceKind::Modpacks, file, None) {
                     Ok((_metadata, mut downloadable)) => {
                         downloadable.output = PathBuf::from(
@@ -456,7 +554,8 @@ async fn download_modpack_inner(
             if install_overrides {
                 let tmp_dir = get_tmp_dir()?.join(manifest.name);
                 zip_extract(path, &tmp_dir)?;
-                read_overrides(to_download, &tmp_dir.join(manifest.overrides))?;
+                let directory = tmp_dir.join(manifest.overrides);
+                read_overrides(to_download, &directory)?;
             }
         }
         SourceKindWithModpack::ModpacksModrinth => {

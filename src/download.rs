@@ -4,7 +4,6 @@ use colored::Colorize as _;
 use fs_extra::file::{move_file, CopyOptions as FileCopyOptions};
 use indicatif::ProgressBar;
 use libium::{
-    config::structs::SrcPath,
     iter_ext::IterExt as _,
     upgrade::{DownloadData, DownloadSource},
 };
@@ -131,7 +130,7 @@ pub async fn download(minecraft_dir: PathBuf, to_download: Vec<DownloadData>) ->
 }
 
 /// Construct a `to_install` vector from the `directory`
-pub fn read_overrides(to_install: &mut Vec<DownloadData>, directory: SrcPath) -> Result<()> {
+pub fn read_overrides(to_install: &mut Vec<DownloadData>, directory: &Path) -> Result<()> {
     if directory.exists() {
         for entry in read_dir(directory)? {
             let entry = entry?;

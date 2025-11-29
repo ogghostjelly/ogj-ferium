@@ -74,7 +74,7 @@ pub async fn create(
             let minecraft_dir = minecraft_dir.unwrap_or_else(|| get_minecraft_dir().join("mods"));
             ensure!(
                 minecraft_dir.is_absolute(),
-                "The provided mods directory is not absolute, i.e. it is a relative path"
+                "The provided minecraft directory is not absolute, i.e. it is a relative path"
             );
 
             let mut profile = Profile::new(Some(game_versions), mod_loader);

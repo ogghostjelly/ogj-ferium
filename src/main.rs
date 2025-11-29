@@ -167,7 +167,7 @@ async fn actual_main(mut cli_app: Ferium) -> Result<()> {
         .unwrap_or({
             #[cfg(target_os = "macos")]
             {
-                old_default_config_path
+                old_default_config_path.clone()
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -452,7 +452,9 @@ async fn actual_main(mut cli_app: Ferium) -> Result<()> {
 }
 
 /// Get the active profile with error handling
-fn get_active_profile(config: &mut Config) -> Result<(&mut ProfileItemConfig, ProfileSourceMut)> {
+fn get_active_profile(
+    config: &mut Config,
+) -> Result<(&mut ProfileItemConfig, ProfileSourceMut<'_>)> {
     let index = get_active_profile_index(config)?;
     let ProfileItem { profile, config } = &mut config.profiles[index];
 

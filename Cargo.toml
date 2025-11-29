@@ -67,6 +67,7 @@ libium = { package = "ogj-libium", path = "libium" }
 anyhow = "1.0"
 furse = "1.5"
 size = "0.5"
+toml = "0.8.23"
 
 [dev-dependencies]
 rand = "0.8"
